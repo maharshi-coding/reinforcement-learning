@@ -1,5 +1,6 @@
 """
-Tests for AIRS – covers environment, attack simulator, monitor, and response engine.
+Tests for AIRS – covers environment, attack simulator, monitor, response engine,
+baselines, and evaluation framework.
 """
 
 import sys
@@ -14,6 +15,7 @@ from airs.environment.attack_simulator import AttackSimulator
 from airs.environment.network_env import NetworkSecurityEnv
 from airs.monitoring.monitor import SystemMonitor
 from airs.response.response_engine import ResponseEngine
+from airs.agent.baselines import AlwaysNoopPolicy, RandomPolicy, RuleBasedThresholdPolicy, get_baseline
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +38,7 @@ class TestAttackSimulator:
         assert "traffic_rate" in result
         assert "failed_logins" in result
         assert "is_attacking" in result
+        assert "phase" in result
 
     def test_step_values_non_negative(self):
         for mode in AttackSimulator.MODES:
@@ -65,11 +68,24 @@ class TestAttackSimulator:
     def test_adaptive_mode_switches(self):
         """Adaptive attacker should switch strategy."""
         sim = AttackSimulator(mode="adaptive", intensity="medium")
-        modes_seen = set()
         for _ in range(200):
-            sim.step(last_action=1)  # keep blocking to trigger switches
-        # We just verify it doesn't crash and step count increments
+            sim.step(last_action=1)
         assert sim._step_count == 200
+
+    def test_multi_stage_mode(self):
+        """Multi-stage attack should cycle through phases."""
+        sim = AttackSimulator(mode="multi_stage", intensity="medium")
+        phases_seen = set()
+        for _ in range(200):
+            result = sim.step(last_action=0)
+            phases_seen.add(result["phase"])
+        assert len(phases_seen) >= 2  # should see at least 2 phases
+
+    def test_defender_history_tracked(self):
+        sim = AttackSimulator(mode="adaptive", intensity="medium", defender_history_len=5)
+        for _ in range(10):
+            sim.step(last_action=1)
+        assert len(sim._defender_history) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -145,13 +161,11 @@ class TestResponseEngine:
         assert outcome.service_cost == pytest.approx(0.0)
 
     def test_isolate_highest_reduction(self):
-        """Isolate should have highest threat reduction among all actions."""
         outcomes = [self.engine.apply(i, 0.8) for i in range(4)]
         reductions = [o.threat_reduction for o in outcomes]
         assert reductions[3] == max(reductions)
 
     def test_isolate_highest_cost(self):
-        """Isolate should also have the highest service cost."""
         outcomes = [self.engine.apply(i, 0.8) for i in range(4)]
         costs = [o.service_cost for o in outcomes]
         assert costs[3] == max(costs)
@@ -224,11 +238,10 @@ class TestNetworkSecurityEnv:
         self.env.reset()
         _, _, _, _, info = self.env.step(1)
         for key in ("action_name", "threat_level", "threat_reduction",
-                    "service_cost", "episode_reward", "step"):
+                    "service_cost", "episode_reward", "step", "phase"):
             assert key in info
 
     def test_reward_no_op_under_high_threat_penalised(self):
-        """No-op under high threat should yield lower reward than blocking."""
         np.random.seed(0)
         env_noop = NetworkSecurityEnv(attack_mode="flood", intensity="high")
         env_block = NetworkSecurityEnv(attack_mode="flood", intensity="high")
@@ -238,7 +251,6 @@ class TestNetworkSecurityEnv:
         for _ in range(3):
             obs, _ = env_noop.reset()
             env_block.reset()
-            # Force high threat state by running a few steps
             for _ in range(10):
                 obs, r, _, _, _ = env_noop.step(0)
                 rewards_noop.append(r)
@@ -248,7 +260,6 @@ class TestNetworkSecurityEnv:
 
         env_noop.close()
         env_block.close()
-        # Rate-limiting under high flood should be better than no-op on average
         assert np.mean(rewards_block) > np.mean(rewards_noop)
 
     def test_all_attack_modes(self):
@@ -260,3 +271,63 @@ class TestNetworkSecurityEnv:
                 obs, _, _, _, _ = env.step(env.action_space.sample())
                 assert np.all(obs >= 0.0) and np.all(obs <= 1.0)
             env.close()
+
+    def test_temporal_window_stacking(self):
+        env = NetworkSecurityEnv(
+            attack_mode="brute_force", intensity="medium", temporal_window=3
+        )
+        obs, _ = env.reset()
+        assert obs.shape == (18,)  # 6 * 3
+        assert np.all(obs >= 0.0) and np.all(obs <= 1.0)
+        env.close()
+
+    def test_noisy_observations(self):
+        env = NetworkSecurityEnv(
+            attack_mode="brute_force", intensity="medium",
+            noisy_observations=True, noise_std=0.1,
+        )
+        obs, _ = env.reset()
+        assert obs.shape == (6,)
+        assert np.all(obs >= 0.0) and np.all(obs <= 1.0)
+        env.close()
+
+    def test_resource_budget(self):
+        env = NetworkSecurityEnv(
+            attack_mode="brute_force", intensity="medium", resource_budget=3,
+        )
+        env.reset()
+        # Use 3 actions → budget exhausted → forced noop
+        for _ in range(3):
+            env.step(1)
+        _, _, _, _, info = env.step(1)  # should be forced to noop
+        assert info["action_name"] == "no_op"
+        env.close()
+
+
+# ---------------------------------------------------------------------------
+# Baselines
+# ---------------------------------------------------------------------------
+
+class TestBaselines:
+    def test_always_noop(self):
+        p = AlwaysNoopPolicy()
+        assert p.predict(np.zeros(6)) == 0
+
+    def test_random_policy(self):
+        p = RandomPolicy(seed=0)
+        actions = [p.predict(np.zeros(6)) for _ in range(100)]
+        assert len(set(actions)) > 1  # should pick more than one action
+
+    def test_rule_based_threshold(self):
+        p = RuleBasedThresholdPolicy()
+        # High threat → isolate
+        obs = np.array([0.5, 0.5, 0.5, 0.5, 0.8, 0.0])
+        assert p.predict(obs) == 3
+        # Low threat → noop
+        obs_low = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.0])
+        assert p.predict(obs_low) == 0
+
+    def test_get_baseline_registry(self):
+        for name in ["always_noop", "random_policy", "rule_based_threshold"]:
+            bl = get_baseline(name)
+            assert hasattr(bl, "predict")

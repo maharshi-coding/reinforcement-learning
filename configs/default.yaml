@@ -1,0 +1,91 @@
+# AIRS – Default Configuration
+# Override any section via CLI or experiment-specific YAML files.
+
+seed: 42
+
+environment:
+  attack_mode: brute_force        # brute_force | flood | adaptive | multi_stage
+  intensity: medium               # low | medium | high
+  max_steps: 200
+  use_real_system_metrics: false
+  # --- new realism knobs ---
+  noisy_observations: false       # add Gaussian sensor noise
+  noise_std: 0.05
+  partial_observability: false    # randomly mask some features
+  mask_probability: 0.1
+  action_cooldown: 0              # min steps between non-noop actions
+  delayed_effect_steps: 0         # action effect delay (0 = immediate)
+  resource_budget: null            # null = unlimited; int = max non-noop actions per episode
+  temporal_window: 1              # number of past timesteps stacked in obs (1 = current only)
+
+agent:
+  algorithm: dqn                  # dqn | ppo
+  policy: MlpPolicy              # MlpPolicy | MlpLstmPolicy (PPO only)
+  dqn:
+    learning_rate: 1.0e-3
+    buffer_size: 50000
+    learning_starts: 500
+    batch_size: 64
+    tau: 1.0
+    gamma: 0.99
+    train_freq: 4
+    gradient_steps: 1
+    target_update_interval: 500
+    exploration_fraction: 0.3
+    exploration_final_eps: 0.05
+  ppo:
+    learning_rate: 3.0e-4
+    n_steps: 512
+    batch_size: 64
+    n_epochs: 10
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+
+training:
+  total_timesteps: 50000
+  n_envs: 1                      # number of parallel envs (VecEnv)
+  eval_freq: 5000                 # evaluate every N timesteps
+  eval_episodes: 10
+  checkpoint_best: true           # save best model by eval reward
+  early_stopping_patience: 5     # stop after N evals without improvement
+  curriculum:
+    enabled: false
+    stages:                       # progressive difficulty
+      - {intensity: low,    timesteps: 15000}
+      - {intensity: medium, timesteps: 20000}
+      - {intensity: high,   timesteps: 15000}
+
+evaluation:
+  episodes: 50
+  n_seeds: 5                     # multi-seed evaluation
+  baselines:                     # baseline policies to compare against
+    - always_noop
+    - random_policy
+    - rule_based_threshold
+  metrics:
+    - mean_reward
+    - detection_delay
+    - false_positive_rate
+    - service_downtime
+    - cost_per_episode
+    - attack_success_rate
+  ood_tests:
+    - bursty_traffic
+    - noisy_telemetry
+    - unseen_attack_combo
+
+reward:
+  threat_weight: 10.0
+  service_cost_weight: 5.0
+  false_positive_weight: 3.0
+  ineffective_weight: 5.0
+  survival_bonus: 0.1
+  response_latency_penalty: 0.0   # new: penalise delayed response
+  downtime_threshold: 0.5         # new: penalty when cumulative cost exceeds this
+  downtime_penalty: 2.0
+
+paths:
+  model_dir: models
+  results_dir: results
+  log_dir: logs

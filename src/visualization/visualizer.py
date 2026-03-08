@@ -1,26 +1,34 @@
 """
 AIRSVisualizer – plotting utilities for training and evaluation results.
+
+Generates:
+  - Reward vs training steps
+  - Attack success rate over episodes
+  - Defense action distribution
+  - Threat timeline with action overlay
+  - Policy comparison bar charts with error bars
+  - Detection delay histogram
+  - Multi-seed reward box plots
 """
 
 from __future__ import annotations
 
 import os
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
 class AIRSVisualizer:
-    """Generate and save AIRS evaluation plots."""
+    """Generate and save AIRS plots."""
 
-    def __init__(self, output_dir: str = "results"):
+    def __init__(self, output_dir: str = "plots"):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 
-    # ------------------------------------------------------------------
     def plot_reward_curve(
         self,
         rewards: List[float],
@@ -28,56 +36,44 @@ class AIRSVisualizer:
         filename: str = "reward_curve.png",
         window: int = 20,
     ) -> str:
-        """Plot cumulative episode reward with a moving-average overlay."""
         fig, ax = plt.subplots(figsize=(10, 4))
         episodes = np.arange(1, len(rewards) + 1)
         ax.plot(episodes, rewards, alpha=0.4, color="steelblue", label="Episode reward")
-
         if len(rewards) >= window:
             ma = np.convolve(rewards, np.ones(window) / window, mode="valid")
-            ax.plot(
-                np.arange(window, len(rewards) + 1),
-                ma,
-                color="navy",
-                linewidth=2,
-                label=f"{window}-ep moving avg",
-            )
-
+            ax.plot(np.arange(window, len(rewards) + 1), ma, color="navy", linewidth=2,
+                    label=f"{window}-ep moving avg")
         ax.set_xlabel("Episode")
         ax.set_ylabel("Cumulative Reward")
         ax.set_title(title)
         ax.legend()
         ax.grid(True, alpha=0.3)
         path = os.path.join(self.output_dir, filename)
-        fig.savefig(path, bbox_inches="tight")
+        fig.savefig(path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         return path
 
-    # ------------------------------------------------------------------
     def plot_action_distribution(
         self,
         action_counts: dict,
         title: str = "Action Distribution",
         filename: str = "action_distribution.png",
     ) -> str:
-        """Bar chart of how often each action was taken."""
         names = list(action_counts.keys())
         counts = list(action_counts.values())
         colors = ["#2ecc71", "#e74c3c", "#f39c12", "#9b59b6"]
-
         fig, ax = plt.subplots(figsize=(7, 4))
-        bars = ax.bar(names, counts, color=colors[: len(names)])
+        bars = ax.bar(names, counts, color=colors[:len(names)])
         ax.bar_label(bars, padding=3)
         ax.set_xlabel("Action")
         ax.set_ylabel("Count")
         ax.set_title(title)
         ax.grid(axis="y", alpha=0.3)
         path = os.path.join(self.output_dir, filename)
-        fig.savefig(path, bbox_inches="tight")
+        fig.savefig(path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         return path
 
-    # ------------------------------------------------------------------
     def plot_threat_timeline(
         self,
         threat_levels: List[float],
@@ -85,7 +81,6 @@ class AIRSVisualizer:
         title: str = "Threat Level & Actions Over Time",
         filename: str = "threat_timeline.png",
     ) -> str:
-        """Dual-axis plot: threat level line + action scatter."""
         steps = np.arange(len(threat_levels))
         action_names = ["no_op", "block_ip", "rate_limit", "isolate"]
         markers = ["o", "s", "^", "D"]
@@ -101,15 +96,9 @@ class AIRSVisualizer:
         for action_id in range(4):
             idx = [i for i, a in enumerate(actions) if a == action_id]
             if idx:
-                ax2.scatter(
-                    idx,
-                    [action_id] * len(idx),
-                    marker=markers[action_id],
-                    color=action_colors[action_id],
-                    label=action_names[action_id],
-                    s=20,
-                    alpha=0.7,
-                )
+                ax2.scatter(idx, [action_id] * len(idx), marker=markers[action_id],
+                            color=action_colors[action_id], label=action_names[action_id],
+                            s=20, alpha=0.7)
         ax2.set_ylabel("Action Taken")
         ax2.set_yticks([0, 1, 2, 3])
         ax2.set_yticklabels(action_names)
@@ -118,22 +107,19 @@ class AIRSVisualizer:
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right", fontsize=8)
-
         ax1.set_title(title)
         ax1.grid(True, alpha=0.2)
         path = os.path.join(self.output_dir, filename)
-        fig.savefig(path, bbox_inches="tight")
+        fig.savefig(path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         return path
 
-    # ------------------------------------------------------------------
     def plot_attack_success_rate(
         self,
         attack_success_rates: List[float],
         title: str = "Attack Success Rate Over Episodes",
         filename: str = "attack_success_rate.png",
     ) -> str:
-        """Line chart of attack success rate over evaluation episodes."""
         fig, ax = plt.subplots(figsize=(10, 4))
         episodes = np.arange(1, len(attack_success_rates) + 1)
         ax.plot(episodes, attack_success_rates, color="crimson", marker="o", markersize=4)
@@ -145,13 +131,9 @@ class AIRSVisualizer:
         ax.legend()
         ax.grid(True, alpha=0.3)
         path = os.path.join(self.output_dir, filename)
-        fig.savefig(path, bbox_inches="tight")
+        fig.savefig(path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         return path
-
-    # ------------------------------------------------------------------
-    # NEW visualisation methods
-    # ------------------------------------------------------------------
 
     def plot_policy_comparison(
         self,
@@ -160,11 +142,9 @@ class AIRSVisualizer:
         title: str = "Policy Comparison",
         filename: str = "policy_comparison.png",
     ) -> str:
-        """Bar chart comparing a metric across multiple policies with error bars."""
         names = list(results.keys())
         means = [results[n].get(metric, 0.0) for n in names]
         stds = [results[n].get(f"std_{metric.replace('mean_', '')}", 0.0) for n in names]
-
         colors = plt.cm.Set2(np.linspace(0, 1, len(names)))
         fig, ax = plt.subplots(figsize=(8, 5))
         bars = ax.bar(names, means, yerr=stds, capsize=5, color=colors, edgecolor="gray")
@@ -174,7 +154,7 @@ class AIRSVisualizer:
         ax.grid(axis="y", alpha=0.3)
         plt.xticks(rotation=15, ha="right")
         path = os.path.join(self.output_dir, filename)
-        fig.savefig(path, bbox_inches="tight")
+        fig.savefig(path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         return path
 
@@ -184,7 +164,6 @@ class AIRSVisualizer:
         title: str = "Detection Delay Distribution",
         filename: str = "detection_delay.png",
     ) -> str:
-        """Histogram of detection delays across episodes."""
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.hist(delays, bins=20, color="steelblue", edgecolor="white", alpha=0.8)
         ax.axvline(np.mean(delays), color="red", linestyle="--",
@@ -195,7 +174,7 @@ class AIRSVisualizer:
         ax.legend()
         ax.grid(True, alpha=0.3)
         path = os.path.join(self.output_dir, filename)
-        fig.savefig(path, bbox_inches="tight")
+        fig.savefig(path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         return path
 
@@ -205,7 +184,6 @@ class AIRSVisualizer:
         title: str = "Multi-Seed Reward Distribution",
         filename: str = "multi_seed_rewards.png",
     ) -> str:
-        """Box plot of reward distributions across seeds."""
         fig, ax = plt.subplots(figsize=(8, 5))
         labels = [f"Seed {s}" for s in seed_rewards.keys()]
         data = list(seed_rewards.values())
@@ -215,6 +193,6 @@ class AIRSVisualizer:
         ax.set_title(title)
         ax.grid(axis="y", alpha=0.3)
         path = os.path.join(self.output_dir, filename)
-        fig.savefig(path, bbox_inches="tight")
+        fig.savefig(path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         return path

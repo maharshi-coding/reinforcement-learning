@@ -1,14 +1,17 @@
 """
 NetworkSecurityEnv – Gymnasium-compatible environment for AIRS.
 
-State Space (6-dimensional, all normalised to [0, 1])
-------------------------------------------------------
+State Space (variable-dimensional, all normalised to [0, 1])
+-------------------------------------------------------------
+Base observation (6 features per timestep):
 0  traffic_rate        – normalised packet/request rate
 1  failed_logins       – normalised failed-login count
 2  cpu_usage           – CPU utilisation
 3  memory_usage        – memory utilisation
 4  threat_level        – composite threat score
 5  last_action         – previous defensive action (normalised)
+
+With temporal_window=N the observation is (6*N,) — stacking last N timesteps.
 
 Action Space (Discrete 4)
 -------------------------
@@ -19,16 +22,19 @@ Action Space (Discrete 4)
 
 Reward Function
 ---------------
-r = +threat_reduction * 10          (positive: mitigating the threat)
-  - service_cost * 5                 (negative: disruption cost)
-  - false_positive_penalty           (negative: acting when threat is low)
-  - ineffective_penalty              (negative: no-op under high threat)
-  + survival_bonus (0.1 per step)    (encourage staying alive)
-
-Discount factor γ = 0.99 (recommended to allow delayed reward propagation)
+r = +threat_reduction × threat_weight
+  - service_cost × service_cost_weight
+  - false_positive_penalty
+  - ineffective_penalty
+  + survival_bonus
+  - response_latency_penalty          (new)
+  - downtime_threshold_penalty        (new)
 """
 
 from __future__ import annotations
+
+from collections import deque
+from typing import Any, Optional
 
 import numpy as np
 import gymnasium as gym
@@ -60,6 +66,17 @@ class NetworkSecurityEnv(gym.Env):
         attack_mode: str = "brute_force",
         intensity: str = "medium",
         use_real_system_metrics: bool = False,
+        # --- new realism knobs ---
+        noisy_observations: bool = False,
+        noise_std: float = 0.05,
+        partial_observability: bool = False,
+        mask_probability: float = 0.1,
+        action_cooldown: int = 0,
+        delayed_effect_steps: int = 0,
+        resource_budget: Optional[int] = None,
+        temporal_window: int = 1,
+        # --- reward knobs ---
+        reward_cfg: Optional[dict] = None,
     ):
         super().__init__()
 
@@ -67,14 +84,36 @@ class NetworkSecurityEnv(gym.Env):
         self.intensity = intensity
         self.use_real_system_metrics = use_real_system_metrics
 
+        # Realism features
+        self.noisy_observations = noisy_observations
+        self.noise_std = noise_std
+        self.partial_observability = partial_observability
+        self.mask_probability = mask_probability
+        self.action_cooldown = action_cooldown
+        self.delayed_effect_steps = delayed_effect_steps
+        self.resource_budget = resource_budget
+        self.temporal_window = max(1, temporal_window)
+
         self._attacker = AttackSimulator(mode=attack_mode, intensity=intensity)
         self._monitor = SystemMonitor()
         self._responder = ResponseEngine()
 
-        # Observation: 6 floats in [0, 1]
+        # Reward config (defaults match original behaviour)
+        rcfg = reward_cfg or {}
+        self._threat_w = rcfg.get("threat_weight", 10.0)
+        self._service_w = rcfg.get("service_cost_weight", 5.0)
+        self._fp_w = rcfg.get("false_positive_weight", 3.0)
+        self._ineff_w = rcfg.get("ineffective_weight", 5.0)
+        self._survival = rcfg.get("survival_bonus", 0.1)
+        self._latency_pen = rcfg.get("response_latency_penalty", 0.0)
+        self._downtime_thresh = rcfg.get("downtime_threshold", 0.5)
+        self._downtime_pen = rcfg.get("downtime_penalty", 2.0)
+
+        # Observation: 6 * temporal_window floats in [0, 1]
+        obs_dim = 6 * self.temporal_window
         self.observation_space = spaces.Box(
-            low=np.zeros(6, dtype=np.float32),
-            high=np.ones(6, dtype=np.float32),
+            low=np.zeros(obs_dim, dtype=np.float32),
+            high=np.ones(obs_dim, dtype=np.float32),
             dtype=np.float32,
         )
 
@@ -85,13 +124,31 @@ class NetworkSecurityEnv(gym.Env):
         self._step_count: int = 0
         self._episode_reward: float = 0.0
 
+        # Temporal window buffer
+        self._obs_buffer: deque[np.ndarray] = deque(maxlen=self.temporal_window)
+
+        # Operational constraints state
+        self._cooldown_counter: int = 0
+        self._actions_used: int = 0
+        self._pending_actions: deque = deque()
+        self._cumulative_service_cost: float = 0.0
+        self._steps_since_first_high_threat: int = -1
+        self._first_detection_step: int = -1
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_obs(self) -> np.ndarray:
-        """Build the normalised observation vector."""
-        attack_metrics = self._attacker.step(self._last_action)
+    def _get_single_obs(self) -> np.ndarray:
+        """Build one 6-d normalised observation vector."""
+        # Determine effective action (accounting for delays)
+        effective_action = self._last_action
+        if self.delayed_effect_steps > 0 and self._pending_actions:
+            if self._pending_actions[0][0] <= self._step_count:
+                _, ea = self._pending_actions.popleft()
+                effective_action = ea
+
+        attack_metrics = self._attacker.step(effective_action)
         traffic = attack_metrics["traffic_rate"]
         logins = attack_metrics["failed_logins"]
 
@@ -100,7 +157,6 @@ class NetworkSecurityEnv(gym.Env):
             cpu = sys_metrics["cpu_usage"]
             mem = sys_metrics["memory_usage"]
         else:
-            # Simulate system load proportional to attack intensity
             cpu = float(np.clip(0.2 + traffic / self.TRAFFIC_MAX * 0.6, 0.0, 1.0))
             mem = float(np.clip(0.3 + logins / self.LOGINS_MAX * 0.4, 0.0, 1.0))
 
@@ -116,51 +172,108 @@ class NetworkSecurityEnv(gym.Env):
                 cpu,
                 mem,
                 threat,
-                self._last_action / (self._responder.num_actions - 1),
+                self._last_action / max(self._responder.num_actions - 1, 1),
             ],
             dtype=np.float32,
         )
-        # Cache threat for reward computation
+        obs = np.clip(obs, 0.0, 1.0)
+
+        # Noisy observations
+        if self.noisy_observations:
+            noise = self.np_random.normal(0.0, self.noise_std, size=obs.shape).astype(np.float32)
+            obs = np.clip(obs + noise, 0.0, 1.0)
+
+        # Partial observability: randomly mask some features
+        if self.partial_observability:
+            mask = self.np_random.random(size=obs.shape) > self.mask_probability
+            obs = obs * mask.astype(np.float32)
+
         self._current_threat = threat
-        return np.clip(obs, 0.0, 1.0)
+        self._current_phase = attack_metrics.get("phase", self.attack_mode)
+        return obs
 
-    def _compute_reward(self, action: int, outcome) -> float:
-        """Compute the step reward.
+    def _get_obs(self) -> np.ndarray:
+        """Return the (possibly stacked) observation."""
+        single = self._get_single_obs()
+        self._obs_buffer.append(single)
 
-        r = threat_reduction_reward
-          - service_disruption_penalty
-          - false_positive_penalty
-          - ineffective_penalty
-          + survival_bonus
-        """
+        # Pad if we don't have enough history yet
+        while len(self._obs_buffer) < self.temporal_window:
+            self._obs_buffer.appendleft(np.zeros(6, dtype=np.float32))
+
+        return np.concatenate(list(self._obs_buffer))
+
+    def _apply_action(self, action: int) -> int:
+        """Apply operational constraints and return the effective action."""
+        # Resource budget
+        if self.resource_budget is not None and action > 0:
+            if self._actions_used >= self.resource_budget:
+                action = 0  # forced no-op
+
+        # Cooldown
+        if self.action_cooldown > 0 and action > 0:
+            if self._cooldown_counter > 0:
+                action = 0  # forced no-op
+            else:
+                self._cooldown_counter = self.action_cooldown
+
+        if action > 0:
+            self._actions_used += 1
+
+        if self._cooldown_counter > 0:
+            self._cooldown_counter -= 1
+
+        # Delayed effects
+        if self.delayed_effect_steps > 0 and action > 0:
+            self._pending_actions.append(
+                (self._step_count + self.delayed_effect_steps, action)
+            )
+
+        return action
+
+    def _compute_reward(self, action: int, outcome: Any) -> float:
+        """Compute the step reward with configurable weights."""
         threat = self._current_threat
 
-        # Primary reward: how much threat was reduced
-        threat_reduction_reward = outcome.threat_reduction * 10.0
+        threat_reduction_reward = outcome.threat_reduction * self._threat_w
+        service_penalty = outcome.service_cost * self._service_w
 
-        # Cost of disrupting service
-        service_penalty = outcome.service_cost * 5.0
-
-        # Penalise aggressive action when threat is actually low (false positive)
+        # False positive penalty
         if threat < self.LOW_THREAT_THRESHOLD and action > 0:
-            false_positive_penalty = (action / 3.0) * 3.0
+            false_positive_penalty = (action / 3.0) * self._fp_w
         else:
             false_positive_penalty = 0.0
 
-        # Penalise inaction when threat is high
+        # Ineffective penalty
         if threat > self.HIGH_THREAT_THRESHOLD and action == 0:
-            ineffective_penalty = threat * 5.0
+            ineffective_penalty = threat * self._ineff_w
         else:
             ineffective_penalty = 0.0
 
-        # Small survival bonus each step (encourages episode completion)
-        survival_bonus = 0.1
+        # Response latency penalty: penalise slow detection
+        latency_penalty = 0.0
+        if self._latency_pen > 0 and threat > self.HIGH_THREAT_THRESHOLD:
+            if self._first_detection_step < 0:
+                self._steps_since_first_high_threat += 1
+                latency_penalty = self._steps_since_first_high_threat * self._latency_pen
+            elif action > 0 and self._first_detection_step < 0:
+                self._first_detection_step = self._step_count
+
+        # Downtime threshold penalty
+        downtime_penalty = 0.0
+        self._cumulative_service_cost += outcome.service_cost
+        if self._cumulative_service_cost > self._downtime_thresh:
+            downtime_penalty = self._downtime_pen
+
+        survival_bonus = self._survival
 
         reward = (
             threat_reduction_reward
             - service_penalty
             - false_positive_penalty
             - ineffective_penalty
+            - latency_penalty
+            - downtime_penalty
             + survival_bonus
         )
         return float(reward)
@@ -176,6 +289,14 @@ class NetworkSecurityEnv(gym.Env):
         self._step_count = 0
         self._episode_reward = 0.0
         self._current_threat = 0.0
+        self._current_phase = self.attack_mode
+        self._obs_buffer.clear()
+        self._cooldown_counter = 0
+        self._actions_used = 0
+        self._pending_actions.clear()
+        self._cumulative_service_cost = 0.0
+        self._steps_since_first_high_threat = -1
+        self._first_detection_step = -1
         obs = self._get_obs()
         return obs, {}
 
@@ -183,6 +304,7 @@ class NetworkSecurityEnv(gym.Env):
         assert self.action_space.contains(action), f"Invalid action {action}"
 
         self._step_count += 1
+        action = self._apply_action(action)
         outcome = self._responder.apply(action, self._current_threat)
         self._last_action = action
 
@@ -200,6 +322,9 @@ class NetworkSecurityEnv(gym.Env):
             "service_cost": outcome.service_cost,
             "episode_reward": self._episode_reward,
             "step": self._step_count,
+            "phase": self._current_phase,
+            "cumulative_service_cost": self._cumulative_service_cost,
+            "actions_used": self._actions_used,
         }
         return obs, reward, terminated, truncated, info
 

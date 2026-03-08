@@ -1,12 +1,13 @@
 """
-AIRSAgent – wrapper around Stable-Baselines3 DQN/PPO for AIRS.
+AIRSAgent – wrapper around Stable-Baselines3 DQN/PPO.
 
 Supports:
-- DQN and PPO algorithms
-- Vectorised parallel environments (SubprocVecEnv / DummyVecEnv)
-- Curriculum learning with progressive difficulty stages
-- Best-model checkpointing and early stopping
-- Multi-seed reproducible training
+    - DQN and PPO algorithms
+    - Vectorised parallel environments (DummyVecEnv / SubprocVecEnv)
+    - Curriculum learning with progressive difficulty stages
+    - Best-model checkpointing and early stopping
+    - Multi-seed reproducible training
+    - Model save / load (handles .zip suffix transparently)
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from stable_baselines3.common.callbacks import (
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
-from airs.environment.network_env import NetworkSecurityEnv
+from src.environment.intrusion_env import IntrusionEnv
 
 
 class RewardLoggerCallback(BaseCallback):
@@ -39,7 +40,6 @@ class RewardLoggerCallback(BaseCallback):
     def _on_step(self) -> bool:
         reward = self.locals.get("rewards", [0])[0]
         self._current_episode_reward += float(reward)
-
         dones = self.locals.get("dones", [False])
         if dones[0]:
             self.episode_rewards.append(self._current_episode_reward)
@@ -53,10 +53,10 @@ def _make_env(
     seed: int = 0,
     env_kwargs: Optional[dict] = None,
 ):
-    """Factory that returns a callable for SubprocVecEnv / DummyVecEnv."""
+    """Factory returning a callable for VecEnv creation."""
     def _init():
         kw = dict(env_kwargs or {})
-        env = NetworkSecurityEnv(attack_mode=attack_mode, intensity=intensity, **kw)
+        env = IntrusionEnv(attack_mode=attack_mode, intensity=intensity, **kw)
         env = Monitor(env)
         env.reset(seed=seed)
         return env
@@ -64,12 +64,12 @@ def _make_env(
 
 
 class AIRSAgent:
-    """Wraps a Stable-Baselines3 agent for the NetworkSecurityEnv.
+    """Wraps a Stable-Baselines3 agent for the IntrusionEnv.
 
     Parameters
     ----------
     algorithm : str
-        "dqn" (default) or "ppo".
+        ``"dqn"`` or ``"ppo"``.
     attack_mode : str
         Attack mode for the training environment.
     intensity : str
@@ -81,14 +81,13 @@ class AIRSAgent:
     seed : int
         Random seed for reproducibility.
     env_kwargs : dict, optional
-        Extra keyword arguments forwarded to NetworkSecurityEnv.
+        Extra keyword arguments forwarded to IntrusionEnv.
     algo_kwargs : dict, optional
         Override default hyperparameters for the chosen algorithm.
     """
 
     ALGORITHMS = {"dqn": DQN, "ppo": PPO}
 
-    # DQN hyperparameters (tuned for this environment)
     DQN_KWARGS: dict[str, Any] = {
         "learning_rate": 1e-3,
         "buffer_size": 50_000,
@@ -104,7 +103,6 @@ class AIRSAgent:
         "verbose": 0,
     }
 
-    # PPO hyperparameters
     PPO_KWARGS: dict[str, Any] = {
         "learning_rate": 3e-4,
         "n_steps": 512,
@@ -139,7 +137,6 @@ class AIRSAgent:
         self.env_kwargs = env_kwargs or {}
         self.reward_logger = RewardLoggerCallback()
 
-        # Build vectorised environment
         self._env = self._build_vec_env(attack_mode, intensity, n_envs, seed)
 
         algo_cls = self.ALGORITHMS[algorithm]
@@ -148,7 +145,6 @@ class AIRSAgent:
             kwargs.update(algo_kwargs)
         kwargs["seed"] = seed
 
-        # Handle model loading — try with and without .zip suffix
         loaded = False
         if model_path:
             for p in [model_path, model_path + ".zip"]:
@@ -167,16 +163,14 @@ class AIRSAgent:
         n_envs: int,
         seed: int,
     ):
-        """Create a (possibly parallel) vectorised environment."""
         env_fns = [
             _make_env(attack_mode, intensity, seed=seed + i, env_kwargs=self.env_kwargs)
             for i in range(n_envs)
         ]
         if n_envs == 1:
             return DummyVecEnv(env_fns)
-        return DummyVecEnv(env_fns)  # DummyVecEnv is safer; switch to SubprocVecEnv if needed
+        return DummyVecEnv(env_fns)
 
-    # ------------------------------------------------------------------
     def train(
         self,
         total_timesteps: int = 50_000,
@@ -186,19 +180,7 @@ class AIRSAgent:
         early_stopping_patience: int = 5,
         model_save_path: str = "models/airs_agent",
     ) -> "AIRSAgent":
-        """Train the agent with optional checkpointing and early stopping.
-
-        Args:
-            total_timesteps: Total environment steps to train for.
-            eval_freq: Evaluate every N timesteps.
-            eval_episodes: Episodes per evaluation.
-            checkpoint_best: Save the model with best eval reward.
-            early_stopping_patience: Stop after N evals w/o improvement.
-            model_save_path: Directory prefix for model checkpoints.
-
-        Returns:
-            self (for chaining)
-        """
+        """Train the agent with optional checkpointing and early stopping."""
         callbacks = [self.reward_logger]
 
         if checkpoint_best:
@@ -236,29 +218,19 @@ class AIRSAgent:
         model_save_path: str = "models/airs_agent",
         **train_kwargs,
     ) -> "AIRSAgent":
-        """Train with curriculum learning — progressively harder stages.
-
-        Args:
-            stages: list of dicts, each with keys ``intensity`` and ``timesteps``.
-            model_save_path: Where to save checkpoints.
-            **train_kwargs: Forwarded to ``train()``.
-
-        Returns:
-            self
-        """
+        """Train with curriculum learning — progressively harder stages."""
         for i, stage in enumerate(stages):
             intensity = stage.get("intensity", self.intensity)
             timesteps = stage.get("timesteps", 10_000)
-            print(f"[AIRS] Curriculum stage {i+1}/{len(stages)}: "
-                  f"intensity={intensity}, timesteps={timesteps:,}")
-
-            # Rebuild env with new intensity
+            print(
+                f"[AIRS] Curriculum stage {i+1}/{len(stages)}: "
+                f"intensity={intensity}, timesteps={timesteps:,}"
+            )
             self._env = self._build_vec_env(
                 self.attack_mode, intensity, self.n_envs, self.seed,
             )
             self._model.set_env(self._env)
             self.intensity = intensity
-
             self.train(
                 total_timesteps=timesteps,
                 model_save_path=model_save_path,
@@ -267,16 +239,13 @@ class AIRSAgent:
         return self
 
     def predict(self, obs: np.ndarray, deterministic: bool = True) -> int:
-        """Predict the best action for the given observation."""
         action, _ = self._model.predict(obs, deterministic=deterministic)
         return int(action)
 
     def save(self, path: str) -> None:
-        """Save the model weights to disk."""
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self._model.save(path)
 
     @property
     def episode_rewards(self) -> list[float]:
-        """Cumulative reward per completed training episode."""
         return self.reward_logger.episode_rewards
