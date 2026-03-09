@@ -41,8 +41,8 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from airs.agent.rl_agent import AIRSAgent
 from airs.config import load_config
 from airs.environment.multi_scenario_env import MultiScenarioEnv
-from src.visualization.training_state import TrainingState, StepData, EpisodeData
-from src.visualization.training_visualizer import TrainingVisualizer
+from airs.visualization.training_state import TrainingState, StepData, EpisodeData
+from airs.visualization.training_visualizer import TrainingVisualizer
 
 
 # ── Visualizer Callback ─────────────────────────────────────────────

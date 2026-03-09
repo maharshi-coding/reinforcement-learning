@@ -19,7 +19,7 @@ from collections import deque
 import numpy as np
 import pygame
 
-from src.visualization.training_state import TrainingState, StepData, EpisodeData
+from airs.visualization.training_state import TrainingState, StepData, EpisodeData
 
 # ── Colour Palette ───────────────────────────────────────────────────
 BG            = (10, 10, 22)
@@ -221,8 +221,10 @@ class _Particle:
         self.col, self.life, self.mlife, self.sz = col, life, life, sz
 
     def tick(self):
-        self.x += self.vx;  self.y += self.vy
-        self.vy += 0.06;    self.life -= 1
+        self.x += self.vx
+        self.y += self.vy
+        self.vy += 0.06
+        self.life -= 1
 
     def draw(self, surf):
         if self.life <= 0:

@@ -19,8 +19,8 @@ environment:
   temporal_window: 1              # number of past timesteps stacked in obs (1 = current only)
 
 agent:
-  algorithm: dqn                  # dqn | ppo | a2c
-  policy: MlpPolicy              # MlpPolicy | MlpLstmPolicy (PPO only)
+  algorithm: dqn                  # dqn | ppo | a2c | recurrent_ppo
+  policy: MlpPolicy              # MlpPolicy | MlpLstmPolicy (recurrent_ppo uses MlpLstmPolicy)
   dqn:
     learning_rate: 5.0e-4         # slower for stability
     buffer_size: 100000           # larger replay buffer for diversity
@@ -53,6 +53,38 @@ agent:
     vf_coef: 0.5
     max_grad_norm: 0.5
     normalize_advantage: true
+  recurrent_ppo:
+    learning_rate: 2.5e-4
+    n_steps: 1024
+    batch_size: 128
+    n_epochs: 10
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+    ent_coef: 0.01
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+    lstm_hidden_size: 128
+    n_lstm_layers: 1
+
+stochastic_actions:
+  enabled: true
+  success_probabilities:
+    block_ip: 0.90
+    rate_limit: 0.80
+    isolate_service: 0.85
+  failure_residual: 0.10          # fraction of normal reduction on failure
+
+self_play:
+  enabled: false
+  rounds: 10
+  defender_steps: 20000
+  attacker_steps: 20000
+
+explainability:
+  enabled: false
+  method: perturbation            # perturbation | shap
+  num_perturbations: 50
 
 training:
   total_timesteps: 500000

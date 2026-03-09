@@ -14,7 +14,6 @@ Enhanced visual features:
 
 import math
 import pygame
-import numpy as np
 from collections import deque
 
 
@@ -272,7 +271,6 @@ class AIRSRenderer:
 
     def _draw_connections(self, state: dict):
         threat = state.get("threat_level", 0.0)
-        action = state.get("action", 0)
 
         # Connections between nodes
         pairs = [("server", "firewall"), ("server", "database"), ("firewall", "database")]

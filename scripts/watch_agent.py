@@ -29,7 +29,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from airs.environment.network_env import NetworkSecurityEnv
-from src.visualization.renderer import AIRSRenderer
+from airs.visualization.renderer import AIRSRenderer
 
 # Map action int → name (must match env)
 ACTION_NAMES = {0: "observe", 1: "block_ip", 2: "rate_limit", 3: "isolate_service"}

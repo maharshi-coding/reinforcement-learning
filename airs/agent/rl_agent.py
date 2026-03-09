@@ -25,6 +25,12 @@ from stable_baselines3.common.callbacks import (
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
+try:
+    from sb3_contrib import RecurrentPPO
+    _HAS_RECURRENT = True
+except ImportError:
+    _HAS_RECURRENT = False
+
 from airs.environment.network_env import NetworkSecurityEnv
 from airs.environment.multi_scenario_env import MultiScenarioEnv
 
@@ -90,7 +96,7 @@ class AIRSAgent:
     Parameters
     ----------
     algorithm : str
-        "dqn" (default) or "ppo".
+        "dqn" (default), "ppo", "a2c", or "recurrent_ppo" (requires sb3-contrib).
     attack_mode : str
         Attack mode for the training environment.
     intensity : str
@@ -108,6 +114,10 @@ class AIRSAgent:
     """
 
     ALGORITHMS = {"dqn": DQN, "ppo": PPO, "a2c": A2C}
+
+    # Add RecurrentPPO if available
+    if _HAS_RECURRENT:
+        ALGORITHMS["recurrent_ppo"] = RecurrentPPO
 
     # DQN hyperparameters (tuned for multi-scenario generalization)
     DQN_KWARGS: dict[str, Any] = {
@@ -158,6 +168,27 @@ class AIRSAgent:
         "verbose": 0,
     }
 
+    # RecurrentPPO hyperparameters (LSTM policy)
+    RECURRENT_PPO_KWARGS: dict[str, Any] = {
+        "learning_rate": 2.5e-4,
+        "n_steps": 1024,
+        "batch_size": 128,
+        "n_epochs": 10,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "clip_range": 0.2,
+        "ent_coef": 0.01,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
+        "policy_kwargs": {
+            "lstm_hidden_size": 128,
+            "n_lstm_layers": 1,
+            "net_arch": {"pi": [256], "vf": [256]},
+        },
+        "device": "cpu",
+        "verbose": 0,
+    }
+
     def __init__(
         self,
         algorithm: str = "dqn",
@@ -190,11 +221,19 @@ class AIRSAgent:
             self._env = self._build_vec_env(attack_mode, intensity, n_envs, seed)
 
         algo_cls = self.ALGORITHMS[algorithm]
-        _default_kwargs = {"dqn": self.DQN_KWARGS, "ppo": self.PPO_KWARGS, "a2c": self.A2C_KWARGS}
-        kwargs = dict(_default_kwargs[algorithm])
+        _default_kwargs = {
+            "dqn": self.DQN_KWARGS,
+            "ppo": self.PPO_KWARGS,
+            "a2c": self.A2C_KWARGS,
+            "recurrent_ppo": self.RECURRENT_PPO_KWARGS,
+        }
+        kwargs = dict(_default_kwargs.get(algorithm, {}))
         if algo_kwargs:
             kwargs.update(algo_kwargs)
         kwargs["seed"] = seed
+
+        # RecurrentPPO requires MlpLstmPolicy
+        policy_str = "MlpLstmPolicy" if algorithm == "recurrent_ppo" else "MlpPolicy"
 
         # Handle model loading — try with and without .zip suffix
         loaded = False
@@ -206,7 +245,7 @@ class AIRSAgent:
                     break
 
         if not loaded:
-            self._model = algo_cls("MlpPolicy", self._env, **kwargs)
+            self._model = algo_cls(policy_str, self._env, **kwargs)
 
     def _build_vec_env(
         self,

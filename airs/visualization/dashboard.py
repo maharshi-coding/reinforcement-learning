@@ -10,7 +10,6 @@ import sys
 import glob
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -18,10 +17,9 @@ _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from src.baselines import get_baseline
-from src.agent.rl_agent import AIRSAgent
-from src.environment.intrusion_env import IntrusionEnv
-from src.evaluation.metrics import evaluate_policy
+from airs.agent.rl_agent import AIRSAgent
+from airs.environment.network_env import NetworkSecurityEnv as IntrusionEnv
+from airs.evaluation import evaluate_policy
 
 st.set_page_config(page_title="AIRS Dashboard", layout="wide")
 st.title("AIRS – Autonomous Intrusion Response System")

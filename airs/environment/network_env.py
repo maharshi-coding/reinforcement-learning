@@ -346,6 +346,7 @@ class NetworkSecurityEnv(gym.Env):
             "threat_level": self._current_threat,
             "threat_reduction": outcome.threat_reduction,
             "service_cost": outcome.service_cost,
+            "action_success": outcome.success,
             "episode_reward": self._episode_reward,
             "step": self._step_count,
             "phase": self._current_phase,
