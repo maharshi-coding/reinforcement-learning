@@ -1,0 +1,81 @@
+name: Evaluate Models
+
+on:
+  # Run after training completes
+  workflow_run:
+    workflows: ["Train Models"]
+    types: [completed]
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      episodes:
+        description: "Evaluation episodes per scenario"
+        required: false
+        default: "30"
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Try to restore models from training workflow or cache
+      - name: Restore trained models
+        uses: actions/cache@v4
+        with:
+          path: models/
+          key: airs-models-${{ github.sha }}
+          restore-keys: airs-models-
+
+      - name: Check models exist
+        run: |
+          if [ ! -d "models" ] || [ -z "$(ls models/*.zip 2>/dev/null)" ]; then
+            echo "::error::No trained models found. Run the Train workflow first."
+            exit 1
+          fi
+          echo "Found models:"
+          ls -lh models/*.zip
+
+      - name: Evaluate all scenarios
+        run: |
+          python scripts/evaluate_all.py \
+            --config configs/default.yaml \
+            --episodes ${{ inputs.episodes || '30' }} \
+            --output_dir results
+
+      - name: Upload evaluation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_number }}
+          path: results/
+          retention-days: 30
+
+      - name: Post summary
+        run: |
+          echo "## Evaluation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "results/eval_all_scenarios.csv" ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            head -20 results/eval_all_scenarios.csv | column -t -s, >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,0 +1,96 @@
+version: "3.8"
+
+services:
+  # ── Train all algorithms ──
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./models:/app/models
+      - ./results:/app/results
+      - ./configs:/app/configs
+    command: >
+      python scripts/train_universal.py
+        --config configs/default.yaml
+        --timesteps 500000
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  # ── Train a single algorithm (pass ALGORITHM env var) ──
+  train-single:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./models:/app/models
+      - ./results:/app/results
+      - ./configs:/app/configs
+    command: >
+      python scripts/train_universal.py
+        --config configs/default.yaml
+        --algorithm ${ALGORITHM:-dqn}
+        --timesteps ${TIMESTEPS:-500000}
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  # ── Evaluate all scenarios ──
+  evaluate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./models:/app/models
+      - ./results:/app/results
+      - ./configs:/app/configs
+    command: >
+      python scripts/evaluate_all.py
+        --config configs/default.yaml
+        --episodes 30
+        --output_dir results
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      train:
+        condition: service_completed_successfully
+
+  # ── Streamlit dashboard ──
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./models:/app/models
+      - ./results:/app/results
+    restart: unless-stopped
+
+  # ── Run tests ──
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m pytest tests/ -v --tb=short
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  # ── Full pipeline: train → evaluate → dashboard ──
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./models:/app/models
+      - ./results:/app/results
+      - ./configs:/app/configs
+    command: >
+      bash -c "
+        echo '=== Training all algorithms ===' &&
+        python scripts/train_universal.py --config configs/default.yaml &&
+        echo '=== Evaluating all scenarios ===' &&
+        python scripts/evaluate_all.py --config configs/default.yaml --output_dir results &&
+        echo '=== Pipeline complete ==='
+      "
+    environment:
+      - PYTHONUNBUFFERED=1
