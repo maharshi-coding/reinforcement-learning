@@ -50,6 +50,16 @@ evaluate: ## Evaluate all algorithms across all scenarios
 dashboard: ## Launch Streamlit dashboard
 	$(STREAMLIT) run scripts/dashboard.py --server.headless true
 
+# ── Real-Time ─────────────────────────────────────────────────
+realtime: ## Run real-time monitor (dry-run, safe mode)
+	$(PYTHON) -m airs.realtime.engine --algorithm ppo --interval 1.0
+
+realtime-dqn: ## Real-time monitor with DQN agent
+	$(PYTHON) -m airs.realtime.engine --algorithm dqn --interval 1.0
+
+realtime-a2c: ## Real-time monitor with A2C agent
+	$(PYTHON) -m airs.realtime.engine --algorithm a2c --interval 1.0
+
 # ── Full Pipeline ─────────────────────────────────────────────
 pipeline: train evaluate ## Train → Evaluate (full pipeline)
 	@echo "✅ Pipeline complete. Run 'make dashboard' to view results."

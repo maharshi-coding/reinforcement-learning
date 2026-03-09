@@ -79,13 +79,14 @@ with st.sidebar:
         st.error(f"❌ No model at {model_path}")
 
 # ─── Tabs ───
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Live Evaluation",
     "📈 Training Plots",
     "🔬 All Scenarios",
     "⚔️ Algorithm Comparison",
     "📋 Results Table",
     "🎬 Episode Replay",
+    "🔴 Real-Time Monitor",
 ])
 
 # ═══════════════════════════════════════════════════════════════
@@ -496,3 +497,133 @@ with tab6:
             # Data table
             with st.expander("📋 Show step-by-step data"):
                 st.dataframe(rdf, use_container_width=True, height=400)
+
+# ═══════════════════════════════════════════════════════════════
+# Tab 7: Real-Time Monitor
+# ═══════════════════════════════════════════════════════════════
+with tab7:
+    st.subheader("🔴 Real-Time System Monitor")
+    st.caption("Live system metrics from your machine — the same data the agent would see in production.")
+
+    rt_col1, rt_col2 = st.columns([1, 3])
+    with rt_col1:
+        rt_duration = st.number_input("Duration (seconds)", min_value=5, max_value=300, value=30, step=5)
+        rt_interval = st.selectbox("Poll interval", [0.5, 1.0, 2.0], index=1)
+        rt_algo = st.selectbox("Agent", ["ppo", "dqn", "a2c"], key="rt_algo", format_func=str.upper)
+        rt_run = st.button("🔴 Start Monitoring", type="primary", use_container_width=True)
+    with rt_col2:
+        st.info(
+            "This reads **real CPU, memory, and network stats** from your machine using `psutil`. "
+            "The trained agent predicts what action it **would** take (dry-run — no actual firewall changes). "
+            "Run: `make realtime` in terminal for continuous monitoring."
+        )
+
+    if rt_run:
+        import numpy as np
+        from airs.monitoring.monitor import SystemMonitor
+        from airs.realtime import RealTimeCollector
+
+        rt_model_path = f"models/{rt_algo}_agent"
+        if not (os.path.exists(rt_model_path + ".zip") or os.path.exists(rt_model_path)):
+            st.error(f"Model not found at {rt_model_path}. Train the {rt_algo.upper()} agent first.")
+        else:
+            from stable_baselines3 import A2C, DQN, PPO
+            algo_map = {"dqn": DQN, "ppo": PPO, "a2c": A2C}
+            rt_model = algo_map[rt_algo].load(rt_model_path)
+
+            collector = RealTimeCollector(poll_interval=rt_interval)
+            monitor = SystemMonitor()
+
+            progress = st.progress(0, text="Collecting live data...")
+            steps = int(rt_duration / rt_interval)
+            rt_data = []
+            last_action = 0
+
+            for i in range(steps):
+                snap = collector.collect()
+                norm = collector.normalise(snap)
+                threat = monitor.compute_threat_level(
+                    snap.traffic_rate, snap.failed_logins,
+                    snap.cpu_usage, snap.memory_usage,
+                )
+                obs = np.array([
+                    norm["traffic_rate"], norm["failed_logins"],
+                    norm["cpu_usage"], norm["memory_usage"],
+                    threat, last_action / 3.0,
+                ], dtype=np.float32)
+                action, _ = rt_model.predict(obs, deterministic=True)
+                action = int(action)
+                last_action = action
+
+                action_names = {0: "Observe", 1: "Block IP", 2: "Rate Limit", 3: "Isolate"}
+                rt_data.append({
+                    "Step": i + 1,
+                    "CPU %": round(snap.cpu_usage * 100, 1),
+                    "Mem %": round(snap.memory_usage * 100, 1),
+                    "Pkts/s": round(snap.traffic_rate, 0),
+                    "Connections": snap.connections,
+                    "Threat": round(threat, 4),
+                    "Action": action_names.get(action, "?"),
+                })
+                progress.progress((i + 1) / steps, text=f"Step {i+1}/{steps} — Threat: {threat:.3f}")
+                time.sleep(rt_interval)
+
+            progress.empty()
+            rt_df = pd.DataFrame(rt_data)
+
+            # Metrics
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Avg Threat", f"{rt_df['Threat'].mean():.4f}")
+            mc2.metric("Max Threat", f"{rt_df['Threat'].max():.4f}")
+            mc3.metric("Avg CPU", f"{rt_df['CPU %'].mean():.1f}%")
+            mc4.metric("Avg Memory", f"{rt_df['Mem %'].mean():.1f}%")
+
+            st.divider()
+
+            # Charts
+            import matplotlib.pyplot as plt
+            fig, (ax_t, ax_a) = plt.subplots(2, 1, figsize=(14, 6), sharex=True,
+                                              gridspec_kw={"height_ratios": [2, 1]})
+
+            steps_arr = rt_df["Step"].values
+            threats = rt_df["Threat"].values
+
+            ax_t.fill_between(steps_arr, threats, alpha=0.3, color="#ef4444")
+            ax_t.plot(steps_arr, threats, color="#ef4444", linewidth=1.5, label="Threat")
+            ax_t.axhline(0.2, color="#f59e0b", linestyle=":", alpha=0.6, label="Threshold (0.2)")
+            ax_t.set_ylabel("Threat Level", color="#94a3b8")
+            ax_t.legend(fontsize=8, facecolor="#1e293b", edgecolor="#334155", labelcolor="#94a3b8")
+            ax_t.set_facecolor("#0f172a")
+            fig.patch.set_facecolor("#0f172a")
+            ax_t.tick_params(colors="#94a3b8")
+            for s in ax_t.spines.values():
+                s.set_color("#334155")
+
+            # Action bars
+            action_map_rt = {"Observe": 0, "Block IP": 1, "Rate Limit": 2, "Isolate": 3}
+            action_cols_rt = {0: "#64748b", 1: "#ef4444", 2: "#f59e0b", 3: "#8b5cf6"}
+            a_ints = [action_map_rt.get(a, 0) for a in rt_df["Action"]]
+            bar_c = [action_cols_rt.get(a, "#64748b") for a in a_ints]
+            ax_a.bar(steps_arr, [1]*len(steps_arr), color=bar_c, width=1.0)
+            ax_a.set_ylabel("Action", color="#94a3b8")
+            ax_a.set_xlabel("Step", color="#94a3b8")
+            ax_a.set_yticks([])
+            ax_a.set_facecolor("#0f172a")
+            ax_a.tick_params(colors="#94a3b8")
+            for s in ax_a.spines.values():
+                s.set_color("#334155")
+
+            from matplotlib.patches import Patch
+            legend_el = [Patch(facecolor=c, label=n) for n, c in
+                         [("Observe","#64748b"),("Block","#ef4444"),
+                          ("Rate Limit","#f59e0b"),("Isolate","#8b5cf6")]]
+            ax_a.legend(handles=legend_el, loc="upper right", ncol=4,
+                        fontsize=8, facecolor="#1e293b", edgecolor="#334155",
+                        labelcolor="#94a3b8")
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # Data table
+            with st.expander("📋 Show raw data"):
+                st.dataframe(rt_df, use_container_width=True, height=400)
