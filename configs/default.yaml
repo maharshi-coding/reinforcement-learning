@@ -19,7 +19,7 @@ environment:
   temporal_window: 1              # number of past timesteps stacked in obs (1 = current only)
 
 agent:
-  algorithm: dqn                  # dqn | ppo
+  algorithm: dqn                  # dqn | ppo | a2c
   policy: MlpPolicy              # MlpPolicy | MlpLstmPolicy (PPO only)
   dqn:
     learning_rate: 5.0e-4         # slower for stability
@@ -44,9 +44,18 @@ agent:
     ent_coef: 0.01                # entropy bonus for exploration
     vf_coef: 0.5                  # value function coefficient
     max_grad_norm: 0.5            # gradient clipping
+  a2c:
+    learning_rate: 7.0e-4
+    n_steps: 256
+    gamma: 0.99
+    gae_lambda: 0.95
+    ent_coef: 0.01
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+    normalize_advantage: true
 
 training:
-  total_timesteps: 50000
+  total_timesteps: 500000
   n_envs: 1                      # number of parallel envs (VecEnv)
   eval_freq: 5000                 # evaluate every N timesteps
   eval_episodes: 10

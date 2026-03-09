@@ -15,7 +15,7 @@ import os
 from typing import Any, Optional
 
 import numpy as np
-from stable_baselines3 import DQN, PPO
+from stable_baselines3 import A2C, DQN, PPO
 from stable_baselines3.common.callbacks import (
     BaseCallback,
     CallbackList,
@@ -107,7 +107,7 @@ class AIRSAgent:
         Override default hyperparameters for the chosen algorithm.
     """
 
-    ALGORITHMS = {"dqn": DQN, "ppo": PPO}
+    ALGORITHMS = {"dqn": DQN, "ppo": PPO, "a2c": A2C}
 
     # DQN hyperparameters (tuned for multi-scenario generalization)
     DQN_KWARGS: dict[str, Any] = {
@@ -138,6 +138,20 @@ class AIRSAgent:
         "ent_coef": 0.01,
         "vf_coef": 0.5,
         "max_grad_norm": 0.5,
+        "policy_kwargs": {"net_arch": {"pi": [256, 256], "vf": [256, 256]}},
+        "verbose": 0,
+    }
+
+    # A2C hyperparameters (tuned for fast convergence)
+    A2C_KWARGS: dict[str, Any] = {
+        "learning_rate": 7e-4,
+        "n_steps": 256,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "ent_coef": 0.01,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
+        "normalize_advantage": True,
         "policy_kwargs": {"net_arch": {"pi": [256, 256], "vf": [256, 256]}},
         "verbose": 0,
     }
@@ -174,7 +188,8 @@ class AIRSAgent:
             self._env = self._build_vec_env(attack_mode, intensity, n_envs, seed)
 
         algo_cls = self.ALGORITHMS[algorithm]
-        kwargs = dict(self.DQN_KWARGS if algorithm == "dqn" else self.PPO_KWARGS)
+        _default_kwargs = {"dqn": self.DQN_KWARGS, "ppo": self.PPO_KWARGS, "a2c": self.A2C_KWARGS}
+        kwargs = dict(_default_kwargs[algorithm])
         if algo_kwargs:
             kwargs.update(algo_kwargs)
         kwargs["seed"] = seed

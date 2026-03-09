@@ -40,6 +40,8 @@ def _load_model(model_path: str, algorithm: str):
     """Load a Stable-Baselines3 model from disk."""
     if algorithm == "dqn":
         from stable_baselines3 import DQN as Algo
+    elif algorithm == "a2c":
+        from stable_baselines3 import A2C as Algo
     else:
         from stable_baselines3 import PPO as Algo
 
@@ -120,7 +122,7 @@ def main():
     parser = argparse.ArgumentParser(description="Watch a trained AIRS agent in action")
     parser.add_argument("--model_path", default="models/dqn_agent",
                         help="Path to trained model (without .zip)")
-    parser.add_argument("--algorithm", default="dqn", choices=["dqn", "ppo"])
+    parser.add_argument("--algorithm", default="dqn", choices=["dqn", "ppo", "a2c"])
     parser.add_argument("--attack_mode", default="brute_force",
                         choices=["brute_force", "flood", "adaptive", "multi_stage"])
     parser.add_argument("--intensity", default="high",

@@ -250,6 +250,13 @@ class NetworkSecurityEnv(gym.Env):
         else:
             false_positive_penalty = 0.0
 
+        # --- Unnecessary action penalty: defensive actions during calm ---
+        # Encourages selective behavior — don't block/isolate when no active threat
+        unnecessary_penalty = 0.0
+        if action > 0 and threat < 0.1:
+            # Heavier actions (isolate > rate_limit > block) get larger penalty
+            unnecessary_penalty = (action / 3.0) * 1.5
+
         # --- Breach damage: doing nothing lets the attack progress ---
         # Threat accumulates as breach_progress; defensive actions reduce it.
         if action == 0:
@@ -287,6 +294,7 @@ class NetworkSecurityEnv(gym.Env):
             threat_reduction_reward
             - service_penalty
             - false_positive_penalty
+            - unnecessary_penalty
             - ineffective_penalty
             - breach_penalty
             - latency_penalty

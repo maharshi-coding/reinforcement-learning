@@ -81,6 +81,8 @@ class AIRSRenderer:
         self._threat_sparkline: deque[float] = deque(maxlen=80)
         self._paused = False
         self._scenario_label = ""
+        self._recording = False
+        self._frames: list = []
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -113,6 +115,12 @@ class AIRSRenderer:
         self._draw_controls_hint()
 
         pygame.display.flip()
+
+        # Capture frame if recording
+        if self._recording:
+            frame_data = pygame.image.tostring(self._screen, "RGB")
+            self._frames.append((self.WIDTH, self.HEIGHT, frame_data))
+
         self._clock.tick(self.FPS)
         return True
 
@@ -124,6 +132,37 @@ class AIRSRenderer:
 
     def set_scenario(self, attack_mode: str, intensity: str):
         self._scenario_label = f"{attack_mode.upper()} | {intensity.upper()}"
+
+    def start_recording(self):
+        """Start capturing frames for GIF export."""
+        self._recording = True
+        self._frames = []
+
+    def save_gif(self, path: str, fps: int = 8):
+        """Save captured frames as an animated GIF."""
+        self._recording = False
+        if not self._frames:
+            print("No frames captured.")
+            return
+
+        from PIL import Image
+        images = []
+        for w, h, raw in self._frames:
+            img = Image.frombytes("RGB", (w, h), raw)
+            # Downscale for smaller GIF
+            img = img.resize((w // 2, h // 2), Image.LANCZOS)
+            images.append(img)
+
+        duration = max(1, 1000 // fps)
+        images[0].save(
+            path,
+            save_all=True,
+            append_images=images[1:],
+            duration=duration,
+            loop=0,
+            optimize=True,
+        )
+        print(f"GIF saved: {path} ({len(images)} frames)")
 
     # ── Drawing helpers ──────────────────────────────────────────────
 

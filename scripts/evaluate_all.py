@@ -34,7 +34,7 @@ from airs.evaluation import evaluate_policy
 
 ATTACK_MODES = ["brute_force", "flood", "adaptive", "multi_stage"]
 INTENSITIES = ["low", "medium", "high"]
-ALGORITHMS = ["dqn", "ppo"]
+ALGORITHMS = ["dqn", "ppo", "a2c"]
 
 
 def parse_args():
@@ -129,7 +129,8 @@ def plot_reward_by_intensity(df, output_dir):
     algos = df["algorithm"].unique()
     x = np.arange(len(INTENSITIES))
     width = 0.8 / len(algos)
-    colours = {"DQN": "#4C9AFF", "PPO": "#F97316", "always_noop": "#888",
+    colours = {"DQN": "#4C9AFF", "PPO": "#F97316", "A2C": "#10B981",
+               "always_noop": "#888",
                "random_policy": "#aaa", "rule_based_threshold": "#6c6"}
 
     for i, algo in enumerate(algos):
@@ -162,7 +163,8 @@ def plot_reward_by_attack_mode(df, output_dir):
     algos = df["algorithm"].unique()
     x = np.arange(len(ATTACK_MODES))
     width = 0.8 / len(algos)
-    colours = {"DQN": "#4C9AFF", "PPO": "#F97316", "always_noop": "#888",
+    colours = {"DQN": "#4C9AFF", "PPO": "#F97316", "A2C": "#10B981",
+               "always_noop": "#888",
                "random_policy": "#aaa", "rule_based_threshold": "#6c6"}
 
     for i, algo in enumerate(algos):
@@ -188,35 +190,41 @@ def plot_reward_by_attack_mode(df, output_dir):
 
 
 def plot_algorithm_comparison(df, output_dir):
-    """Grouped bar: DQN vs PPO per scenario."""
-    rl_df = df[df["algorithm"].isin(["DQN", "PPO"])]
+    """Grouped bar: DQN vs PPO vs A2C per scenario."""
+    rl_algos = ["DQN", "PPO", "A2C"]
+    rl_df = df[df["algorithm"].isin(rl_algos)]
     if len(rl_df["algorithm"].unique()) < 2:
         return
 
+    colours = {"DQN": "#4C9AFF", "PPO": "#F97316", "A2C": "#10B981"}
+
     scenarios = []
-    dqn_rewards = []
-    ppo_rewards = []
+    rewards_by_algo = {a: [] for a in rl_algos}
     for mode in ATTACK_MODES:
         for intensity in INTENSITIES:
             label = f"{mode}\n{intensity}"
             scenarios.append(label)
-            d = rl_df[(rl_df["algorithm"] == "DQN") & (rl_df["attack_mode"] == mode) & (rl_df["intensity"] == intensity)]
-            p = rl_df[(rl_df["algorithm"] == "PPO") & (rl_df["attack_mode"] == mode) & (rl_df["intensity"] == intensity)]
-            dqn_rewards.append(d["mean_reward"].values[0] if len(d) > 0 else 0)
-            ppo_rewards.append(p["mean_reward"].values[0] if len(p) > 0 else 0)
+            for algo in rl_algos:
+                row = rl_df[(rl_df["algorithm"] == algo) & (rl_df["attack_mode"] == mode) & (rl_df["intensity"] == intensity)]
+                rewards_by_algo[algo].append(row["mean_reward"].values[0] if len(row) > 0 else 0)
 
-    fig, ax = plt.subplots(figsize=(14, 6))
+    present_algos = [a for a in rl_algos if any(r != 0 for r in rewards_by_algo[a])]
+    fig, ax = plt.subplots(figsize=(15, 6))
     x = np.arange(len(scenarios))
-    width = 0.35
-    ax.bar(x - width/2, dqn_rewards, width, label="DQN", color="#4C9AFF", alpha=0.85)
-    ax.bar(x + width/2, ppo_rewards, width, label="PPO", color="#F97316", alpha=0.85)
+    width = 0.8 / len(present_algos)
+
+    for i, algo in enumerate(present_algos):
+        offset = (i - (len(present_algos) - 1) / 2) * width
+        ax.bar(x + offset, rewards_by_algo[algo], width, label=algo,
+               color=colours.get(algo, f"C{i}"), alpha=0.85)
+
     ax.set_xticks(x)
-    ax.set_xticklabels(scenarios, fontsize=8)
+    ax.set_xticklabels(scenarios, fontsize=7)
     ax.set_ylabel("Mean Reward")
-    ax.set_title("DQN vs PPO – All 12 Scenarios")
+    ax.set_title("DQN vs PPO vs A2C – All 12 Scenarios")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
-    path = os.path.join(output_dir, "dqn_vs_ppo_comparison.png")
+    path = os.path.join(output_dir, "algorithm_comparison.png")
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
@@ -225,7 +233,7 @@ def plot_algorithm_comparison(df, output_dir):
 
 def plot_heatmap(df, output_dir):
     """Heatmaps: reward per (attack_mode × intensity) for DQN and PPO."""
-    for algo in ["DQN", "PPO"]:
+    for algo in ["DQN", "PPO", "A2C"]:
         sub = df[df["algorithm"] == algo]
         if sub.empty:
             continue
@@ -313,15 +321,15 @@ def main():
     print(summary.to_string())
 
     print(f"\n{'='*70}")
-    print(f" DQN vs PPO by Intensity")
+    print(f" DQN vs PPO vs A2C by Intensity")
     print(f"{'='*70}")
-    rl_df = df[df["algorithm"].isin(["DQN", "PPO"])]
+    rl_df = df[df["algorithm"].isin(["DQN", "PPO", "A2C"])]
     pivot = rl_df.pivot_table(values="mean_reward", index="intensity",
                                columns="algorithm", aggfunc="mean")
     print(pivot.to_string())
 
     print(f"\n{'='*70}")
-    print(f" DQN vs PPO by Attack Mode")
+    print(f" DQN vs PPO vs A2C by Attack Mode")
     print(f"{'='*70}")
     pivot2 = rl_df.pivot_table(values="mean_reward", index="attack_mode",
                                 columns="algorithm", aggfunc="mean")
