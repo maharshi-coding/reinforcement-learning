@@ -26,6 +26,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from airs.environment.network_env import NetworkSecurityEnv
+from airs.environment.multi_scenario_env import MultiScenarioEnv
 
 
 class RewardLoggerCallback(BaseCallback):
@@ -63,6 +64,26 @@ def _make_env(
     return _init
 
 
+def _make_multi_env(
+    seed: int = 0,
+    env_kwargs: Optional[dict] = None,
+    attack_modes: Optional[list[str]] = None,
+    intensities: Optional[list[str]] = None,
+):
+    """Factory that returns a callable for a MultiScenarioEnv."""
+    def _init():
+        kw = dict(env_kwargs or {})
+        env = MultiScenarioEnv(
+            attack_modes=attack_modes,
+            intensities=intensities,
+            env_kwargs=kw,
+        )
+        env = Monitor(env)
+        env.reset(seed=seed)
+        return env
+    return _init
+
+
 class AIRSAgent:
     """Wraps a Stable-Baselines3 agent for the NetworkSecurityEnv.
 
@@ -88,31 +109,36 @@ class AIRSAgent:
 
     ALGORITHMS = {"dqn": DQN, "ppo": PPO}
 
-    # DQN hyperparameters (tuned for this environment)
+    # DQN hyperparameters (tuned for multi-scenario generalization)
     DQN_KWARGS: dict[str, Any] = {
-        "learning_rate": 1e-3,
-        "buffer_size": 50_000,
-        "learning_starts": 500,
-        "batch_size": 64,
-        "tau": 1.0,
+        "learning_rate": 5e-4,
+        "buffer_size": 100_000,
+        "learning_starts": 1000,
+        "batch_size": 128,
+        "tau": 0.005,
         "gamma": 0.99,
         "train_freq": 4,
-        "gradient_steps": 1,
-        "target_update_interval": 500,
-        "exploration_fraction": 0.3,
-        "exploration_final_eps": 0.05,
+        "gradient_steps": 2,
+        "target_update_interval": 250,
+        "exploration_fraction": 0.4,
+        "exploration_final_eps": 0.03,
+        "policy_kwargs": {"net_arch": [256, 256]},
         "verbose": 0,
     }
 
-    # PPO hyperparameters
+    # PPO hyperparameters (tuned for stability)
     PPO_KWARGS: dict[str, Any] = {
-        "learning_rate": 3e-4,
-        "n_steps": 512,
-        "batch_size": 64,
-        "n_epochs": 10,
+        "learning_rate": 2.5e-4,
+        "n_steps": 1024,
+        "batch_size": 128,
+        "n_epochs": 15,
         "gamma": 0.99,
         "gae_lambda": 0.95,
         "clip_range": 0.2,
+        "ent_coef": 0.01,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
+        "policy_kwargs": {"net_arch": {"pi": [256, 256], "vf": [256, 256]}},
         "verbose": 0,
     }
 
@@ -126,6 +152,7 @@ class AIRSAgent:
         seed: int = 42,
         env_kwargs: Optional[dict] = None,
         algo_kwargs: Optional[dict] = None,
+        multi_scenario: bool = False,
     ):
         algorithm = algorithm.lower()
         if algorithm not in self.ALGORITHMS:
@@ -137,10 +164,14 @@ class AIRSAgent:
         self.n_envs = n_envs
         self.seed = seed
         self.env_kwargs = env_kwargs or {}
+        self.multi_scenario = multi_scenario
         self.reward_logger = RewardLoggerCallback()
 
         # Build vectorised environment
-        self._env = self._build_vec_env(attack_mode, intensity, n_envs, seed)
+        if multi_scenario:
+            self._env = self._build_multi_vec_env(n_envs, seed)
+        else:
+            self._env = self._build_vec_env(attack_mode, intensity, n_envs, seed)
 
         algo_cls = self.ALGORITHMS[algorithm]
         kwargs = dict(self.DQN_KWARGS if algorithm == "dqn" else self.PPO_KWARGS)
@@ -174,7 +205,15 @@ class AIRSAgent:
         ]
         if n_envs == 1:
             return DummyVecEnv(env_fns)
-        return DummyVecEnv(env_fns)  # DummyVecEnv is safer; switch to SubprocVecEnv if needed
+        return DummyVecEnv(env_fns)
+
+    def _build_multi_vec_env(self, n_envs: int, seed: int):
+        """Create vectorised multi-scenario environments."""
+        env_fns = [
+            _make_multi_env(seed=seed + i, env_kwargs=self.env_kwargs)
+            for i in range(n_envs)
+        ]
+        return DummyVecEnv(env_fns)
 
     # ------------------------------------------------------------------
     def train(

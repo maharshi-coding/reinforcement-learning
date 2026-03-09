@@ -134,6 +134,7 @@ class NetworkSecurityEnv(gym.Env):
         self._cumulative_service_cost: float = 0.0
         self._steps_since_first_high_threat: int = -1
         self._first_detection_step: int = -1
+        self._breach_progress: float = 0.0
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -232,25 +233,39 @@ class NetworkSecurityEnv(gym.Env):
         return action
 
     def _compute_reward(self, action: int, outcome: Any) -> float:
-        """Compute the step reward with configurable weights."""
+        """Compute the step reward with configurable weights.
+
+        Core idea: ignoring attacks causes breach damage that escalates
+        over time, making 'do nothing' non-viable under persistent attack.
+        Taking action during calm periods incurs false-positive cost.
+        """
         threat = self._current_threat
 
         threat_reduction_reward = outcome.threat_reduction * self._threat_w
         service_penalty = outcome.service_cost * self._service_w
 
-        # False positive penalty
+        # --- False positive penalty: only when threat is genuinely low ---
         if threat < self.LOW_THREAT_THRESHOLD and action > 0:
             false_positive_penalty = (action / 3.0) * self._fp_w
         else:
             false_positive_penalty = 0.0
 
-        # Ineffective penalty
+        # --- Breach damage: doing nothing lets the attack progress ---
+        # Threat accumulates as breach_progress; defensive actions reduce it.
+        if action == 0:
+            self._breach_progress = min(self._breach_progress + threat, 3.0)
+        else:
+            self._breach_progress = max(0.0, self._breach_progress - outcome.threat_reduction)
+
+        breach_penalty = self._breach_progress * 1.0
+
+        # --- Legacy ineffective penalty for very high threat ---
         if threat > self.HIGH_THREAT_THRESHOLD and action == 0:
             ineffective_penalty = threat * self._ineff_w
         else:
             ineffective_penalty = 0.0
 
-        # Response latency penalty: penalise slow detection
+        # --- Response latency penalty ---
         latency_penalty = 0.0
         if self._latency_pen > 0 and threat > self.HIGH_THREAT_THRESHOLD:
             if self._first_detection_step < 0:
@@ -259,19 +274,21 @@ class NetworkSecurityEnv(gym.Env):
             elif action > 0 and self._first_detection_step < 0:
                 self._first_detection_step = self._step_count
 
-        # Downtime threshold penalty
+        # --- Downtime threshold penalty ---
         downtime_penalty = 0.0
         self._cumulative_service_cost += outcome.service_cost
         if self._cumulative_service_cost > self._downtime_thresh:
             downtime_penalty = self._downtime_pen
 
-        survival_bonus = self._survival
+        # --- Survival bonus: reduced when under threat ---
+        survival_bonus = self._survival * (1.0 - threat)
 
         reward = (
             threat_reduction_reward
             - service_penalty
             - false_positive_penalty
             - ineffective_penalty
+            - breach_penalty
             - latency_penalty
             - downtime_penalty
             + survival_bonus
@@ -297,6 +314,7 @@ class NetworkSecurityEnv(gym.Env):
         self._cumulative_service_cost = 0.0
         self._steps_since_first_high_threat = -1
         self._first_detection_step = -1
+        self._breach_progress = 0.0
         obs = self._get_obs()
         return obs, {}
 

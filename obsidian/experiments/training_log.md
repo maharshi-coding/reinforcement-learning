@@ -53,3 +53,43 @@ All experiments follow the multi-seed protocol:
 - **Config**: configs/training_config.yaml
 - **Status**: Restructured src/ pipeline validation
 - **Notes**: Validated training, evaluation, baselines, MLflow tracking, plot generation
+
+## Experiment 007: Reward Function / Threat Level Fix
+- **Date**: 2026-03-08
+- **Problem**: Agent scored 17.99 (below "do nothing" at 20.0), 100% FPR, spammed single action
+- **Root cause analysis**:
+  1. **Threat level too low**: brute_force medium produced threat ≈ 0.12. The `HIGH_THREAT_THRESHOLD=0.6` never triggered, so the ineffective penalty (for ignoring attacks) never fired.
+  2. **"Do nothing" was free**: survival bonus gave +0.1/step × 200 = 20.0 with zero risk. No penalty for ignoring attacks.
+  3. **False positive penalty fired during real attacks**: because threat < 0.2 even during genuine brute-force, any defensive action was counted as a false positive.
+- **Fixes applied** (in `airs/monitoring/monitor.py`, `airs/environment/network_env.py`, `src/environment/intrusion_env.py`):
+  1. **Threat computation**: replaced `spike = t*f + 0.5*c` with `dominant = max(t,f); spike = dominant^0.5 + 0.3*c`, plus sqrt scaling. Threat now ≈ 0.5–0.6 for medium attacks.
+  2. **Breach damage**: new accumulating penalty when agent does nothing during attacks. Capped at 3.0, multiplied by 1.0. Makes passivity non-viable.
+  3. **Survival bonus**: scaled by `(1 - threat)` so calm periods reward patience, but active attacks don't.
+- **Validation** (hand-coded policies):
+  - Do nothing: -598 (was +20)
+  - Smart (block when threat > 0.3): +513
+  - Always block: +512
+  - Random: +226
+
+## Experiment 008: DQN Retrained (Post-Fix)
+- **Date**: 2026-03-08
+- **Algorithm**: DQN
+- **Attack mode**: brute_force, medium intensity
+- **Timesteps**: 100,000 (early-stopped at 300 episodes)
+- **Final avg reward (last 20)**: 553.22
+- **Evaluation (50 episodes, 5 seeds)**:
+  - Mean reward: 571.17 ± 1.85, CI [570.68, 571.69]
+  - Attack success: 0.0%
+  - False positive rate: **0.0%** (was 100%)
+  - Detection delay: 0.0 steps
+  - Service downtime: 85.86
+- **Baseline comparison**:
+  - vs always_noop: **+1171.53** (p < 0.0001)
+  - vs random: **+352.44** (p < 0.0001)
+  - vs rule_based: **+187.24** (p < 0.0001)
+- **OOD results**:
+  - bursty_traffic (flood, high): 700.71 — strong generalisation
+  - noisy_telemetry (brute_force, medium): 569.59 — robust to noise
+  - unseen_attack_combo (multi_stage, high): 587.43 — handles novel attacks
+- **Status**: PASS — agent decisively outperforms all baselines
+- **Note**: Agent favours `isolate_service` (highest reduction). Future work: penalise over-isolation to encourage lighter actions.

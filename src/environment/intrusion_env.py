@@ -133,9 +133,13 @@ class SystemMonitor:
         f = min(failed_logins / logins_max, 1.0)
         c = float(np.clip(cpu_usage, 0.0, 1.0))
         m = float(np.clip(memory_usage, 0.0, 1.0))
-        spike = min(t * f + 0.5 * c, 1.0)
+
+        dominant = max(t, f)
+        spike = min(dominant ** 0.5 + 0.3 * c, 1.0)
+
         features = np.array([t, f, c, m, spike], dtype=np.float32)
         threat = float(np.dot(self._THREAT_WEIGHTS, features))
+        threat = float(np.sqrt(np.clip(threat, 0.0, 1.0)))
         return float(np.clip(threat, 0.0, 1.0))
 
 
@@ -366,8 +370,7 @@ class IntrusionEnv(gym.Env):
         self._cumulative_service_cost: float = 0.0
         self._steps_since_first_high_threat: int = -1
         self._first_detection_step: int = -1
-
-    # ──────────── Internal helpers ────────────
+        self._breach_progress: float = 0.0
 
     def _get_single_obs(self) -> np.ndarray:
         effective_action = self._last_action
@@ -473,6 +476,14 @@ class IntrusionEnv(gym.Env):
         else:
             false_positive_penalty = 0.0
 
+        # Breach damage: doing nothing lets the attack progress
+        if action == 0:
+            self._breach_progress = min(self._breach_progress + threat, 3.0)
+        else:
+            self._breach_progress = max(0.0, self._breach_progress - outcome.threat_reduction)
+
+        breach_penalty = self._breach_progress * 1.0
+
         if threat > self.HIGH_THREAT_THRESHOLD and action == 0:
             ineffective_penalty = threat * self._ineff_w
         else:
@@ -491,14 +502,17 @@ class IntrusionEnv(gym.Env):
         if self._cumulative_service_cost > self._downtime_thresh:
             downtime_penalty = self._downtime_pen
 
+        survival_bonus = self._survival * (1.0 - threat)
+
         reward = (
             threat_reduction_reward
             - service_penalty
             - false_positive_penalty
             - ineffective_penalty
+            - breach_penalty
             - latency_penalty
             - downtime_penalty
-            + self._survival
+            + survival_bonus
         )
         return float(reward)
 
@@ -519,6 +533,7 @@ class IntrusionEnv(gym.Env):
         self._cumulative_service_cost = 0.0
         self._steps_since_first_high_threat = -1
         self._first_detection_step = -1
+        self._breach_progress = 0.0
         obs = self._get_obs()
         return obs, {}
 

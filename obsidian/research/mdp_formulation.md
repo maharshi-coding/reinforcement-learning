@@ -54,7 +54,28 @@ Attack modes:
 
 Multi-objective reward combining security gain and operational costs:
 
-$$R(s, a) = \underbrace{r_{\text{threat}} \cdot w_{\text{threat}}}_{\text{security gain}} - \underbrace{c_{\text{service}} \cdot w_{\text{service}}}_{\text{disruption cost}} - \underbrace{p_{\text{fp}}}_{\text{false positive}} - \underbrace{p_{\text{ineff}}}_{\text{inaction penalty}} - \underbrace{p_{\text{latency}}}_{\text{response delay}} - \underbrace{p_{\text{downtime}}}_{\text{cumulative cost}} + b_{\text{survival}}$$
+$$R(s, a) = \underbrace{r_{\text{threat}} \cdot w_{\text{threat}}}_{\text{security gain}} - \underbrace{c_{\text{service}} \cdot w_{\text{service}}}_{\text{disruption cost}} - \underbrace{p_{\text{fp}}}_{\text{false positive}} - \underbrace{p_{\text{ineff}}}_{\text{inaction penalty}} - \underbrace{p_{\text{breach}}}_{\text{breach damage}} - \underbrace{p_{\text{latency}}}_{\text{response delay}} - \underbrace{p_{\text{downtime}}}_{\text{cumulative cost}} + b_{\text{survival}} \cdot (1 - \text{threat})$$
+
+### Breach Damage (added 2026-03-08)
+
+Accumulating penalty when threat is present but agent does nothing:
+
+$$\text{breach\_progress}_{t} = \begin{cases} \min(\text{breach\_progress}_{t-1} + \text{threat}_t, 3.0) & \text{if } a = 0 \\ \max(0, \text{breach\_progress}_{t-1} - r_{\text{reduction}}) & \text{if } a > 0 \end{cases}$$
+
+$$p_{\text{breach}} = \text{breach\_progress}_t \times 1.0$$
+
+This makes passivity non-viable: a "do nothing" policy accumulates escalating penalties.
+
+### Threat Level Computation (updated 2026-03-08)
+
+The threat level uses a nonlinear formula that amplifies the dominant attack signal:
+
+$$\text{dominant} = \max(t, f)$$
+$$\text{spike} = \min(\sqrt{\text{dominant}} + 0.3c, 1.0)$$
+$$\text{threat}_{\text{raw}} = w^T \cdot [t, f, c, m, \text{spike}]$$
+$$\text{threat} = \sqrt{\text{threat}_{\text{raw}}}$$
+
+The sqrt scaling ensures even moderate attacks (medium intensity brute force) produce threat levels ≈ 0.5, making threshold-based penalties actually trigger.
 
 ### Reward Table
 

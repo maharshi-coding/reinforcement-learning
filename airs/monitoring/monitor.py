@@ -54,8 +54,14 @@ class SystemMonitor:
         f = min(failed_logins / logins_max, 1.0)
         c = float(np.clip(cpu_usage, 0.0, 1.0))
         m = float(np.clip(memory_usage, 0.0, 1.0))
-        spike = min(t * f + 0.5 * c, 1.0)  # joint indicator
+
+        # Amplify the dominant attack signal so threat reflects true danger.
+        # For brute_force the main signal is f; for flood it is t.
+        dominant = max(t, f)
+        spike = min(dominant ** 0.5 + 0.3 * c, 1.0)
 
         features = np.array([t, f, c, m, spike], dtype=np.float32)
         threat = float(np.dot(self._THREAT_WEIGHTS, features))
+        # Apply a sqrt curve so even moderate attacks produce threat > 0.3
+        threat = float(np.sqrt(np.clip(threat, 0.0, 1.0)))
         return float(np.clip(threat, 0.0, 1.0))
