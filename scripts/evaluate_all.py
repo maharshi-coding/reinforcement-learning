@@ -14,7 +14,6 @@ Usage:
 """
 
 import argparse
-import csv
 import os
 import sys
 
@@ -29,7 +28,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from airs.agent.rl_agent import AIRSAgent
 from airs.agent.baselines import get_baseline
 from airs.config import load_config
-from airs.environment.network_env import NetworkSecurityEnv
 from airs.evaluation import evaluate_policy
 
 ATTACK_MODES = ["brute_force", "flood", "adaptive", "multi_stage"]
@@ -295,7 +293,7 @@ def main():
 
     # Evaluate baselines
     print(f"\n{'='*60}")
-    print(f" Evaluating baselines")
+    print(" Evaluating baselines")
     print(f"{'='*60}")
     baseline_rows = evaluate_baselines(args.episodes, args.seed, env_kwargs)
     all_rows.extend(baseline_rows)
@@ -306,7 +304,7 @@ def main():
     print(f"\n  CSV saved: {csv_path}")
 
     # Generate charts
-    print(f"\nGenerating charts...")
+    print("\nGenerating charts...")
     os.makedirs(output_dir, exist_ok=True)
     plot_reward_by_intensity(df, output_dir)
     plot_reward_by_attack_mode(df, output_dir)
@@ -315,13 +313,13 @@ def main():
 
     # Print summary table
     print(f"\n{'='*70}")
-    print(f" SUMMARY: Mean Reward by Algorithm")
+    print(" SUMMARY: Mean Reward by Algorithm")
     print(f"{'='*70}")
     summary = df.groupby("algorithm")["mean_reward"].agg(["mean", "std", "min", "max"])
     print(summary.to_string())
 
     print(f"\n{'='*70}")
-    print(f" DQN vs PPO vs A2C by Intensity")
+    print(" DQN vs PPO vs A2C by Intensity")
     print(f"{'='*70}")
     rl_df = df[df["algorithm"].isin(["DQN", "PPO", "A2C"])]
     pivot = rl_df.pivot_table(values="mean_reward", index="intensity",
@@ -329,7 +327,7 @@ def main():
     print(pivot.to_string())
 
     print(f"\n{'='*70}")
-    print(f" DQN vs PPO vs A2C by Attack Mode")
+    print(" DQN vs PPO vs A2C by Attack Mode")
     print(f"{'='*70}")
     pivot2 = rl_df.pivot_table(values="mean_reward", index="attack_mode",
                                 columns="algorithm", aggfunc="mean")

@@ -7,7 +7,6 @@ a defined effectiveness against each attack type.
 """
 
 from dataclasses import dataclass
-from typing import Tuple
 
 
 @dataclass

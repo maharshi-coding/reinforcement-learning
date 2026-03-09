@@ -5,7 +5,7 @@ AIRSVisualizer – plotting utilities for training and evaluation results.
 from __future__ import annotations
 
 import os
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 import matplotlib

@@ -20,16 +20,13 @@ python scripts/evaluate.py [--algorithm dqn|ppo] [--attack_mode brute_force|floo
 import argparse
 import os
 import sys
-from collections import defaultdict
 
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from airs.agent.baselines import get_baseline
 from airs.agent.rl_agent import AIRSAgent
 from airs.config import load_config
-from airs.environment.network_env import NetworkSecurityEnv
 from airs.evaluation import (
     EvalResult,
     compare_policies,
@@ -156,7 +153,7 @@ def main():
     agent_ms = None
     if args.baselines:
         baseline_names = eval_cfg.get("baselines", ["always_noop", "random_policy", "rule_based_threshold"])
-        print(f"\n[AIRS] Running baseline comparisons...")
+        print("\n[AIRS] Running baseline comparisons...")
 
         # Multi-seed for agent (for fair comparison)
         n_seeds = eval_cfg.get("n_seeds", 5)
@@ -185,7 +182,7 @@ def main():
 
     # ─── OOD tests ───
     if args.ood:
-        print(f"\n[AIRS] Running out-of-distribution tests...")
+        print("\n[AIRS] Running out-of-distribution tests...")
         ood_results = run_ood_tests(agent, f"{algorithm}_agent", n_episodes=20, seed=seed)
         for scenario, ood_r in ood_results.items():
             _print_result(ood_r)
@@ -214,7 +211,6 @@ def main():
         title=f"Attack Success Rate ({attack_mode}, {intensity})",
         filename=f"{prefix}_attack_success.png",
     )
-    ep_len = NetworkSecurityEnv.MAX_STEPS
     if result.episode_metrics:
         first_ep = result.episode_metrics[0]
         viz.plot_threat_timeline(

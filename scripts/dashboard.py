@@ -10,13 +10,11 @@ import sys
 import glob
 import time
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from airs.agent.baselines import BASELINE_REGISTRY, get_baseline
 from airs.agent.rl_agent import AIRSAgent
 from airs.environment.network_env import NetworkSecurityEnv
 from airs.evaluation import evaluate_policy
@@ -45,6 +43,7 @@ st.markdown("""
     .tag-low { background: #22c55e; color: white; }
     .tag-dqn { background: #3b82f6; color: white; }
     .tag-ppo { background: #f97316; color: white; }
+    .tag-a2c { background: #10b981; color: white; }
     h1 { color: #f8fafc !important; }
     .big-header { font-size: 2.2rem; font-weight: 700; margin-bottom: 0; }
     .sub-header { color: #94a3b8; font-size: 1rem; margin-top: 0; }
@@ -60,7 +59,7 @@ st.divider()
 with st.sidebar:
     st.header("⚙️ Configuration")
 
-    algorithm = st.selectbox("Algorithm", ["dqn", "ppo"], format_func=str.upper)
+    algorithm = st.selectbox("Algorithm", ["dqn", "ppo", "a2c"], format_func=str.upper)
     attack_mode = st.selectbox("Attack Mode",
                                 ["brute_force", "flood", "adaptive", "multi_stage"])
     intensity = st.selectbox("Intensity", ["low", "medium", "high"])
@@ -75,7 +74,7 @@ with st.sidebar:
     model_path = os.path.join(model_dir, f"{algorithm}_agent")
     model_exists = os.path.exists(model_path + ".zip") or os.path.exists(model_path)
     if model_exists:
-        st.success(f"✅ Model found")
+        st.success("✅ Model found")
     else:
         st.error(f"❌ No model at {model_path}")
 
@@ -84,7 +83,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Live Evaluation",
     "📈 Training Plots",
     "🔬 All Scenarios",
-    "⚔️ DQN vs PPO",
+    "⚔️ Algorithm Comparison",
     "📋 Results Table",
     "🎬 Episode Replay",
 ])
@@ -258,18 +257,18 @@ with tab3:
         df = pd.read_csv(csv_path)
 
         # Summary metrics
-        rl_df = df[df["algorithm"].isin(["DQN", "PPO"])]
+        rl_df = df[df["algorithm"].isin(["DQN", "PPO", "A2C"])]
         if not rl_df.empty:
             st.markdown("**Overall Performance Summary**")
             c1, c2, c3, c4 = st.columns(4)
-            for algo, col in zip(["DQN", "PPO"], [c1, c2]):
+            for algo, col in zip(["DQN", "PPO", "A2C"], [c1, c2, c3]):
                 sub = rl_df[rl_df["algorithm"] == algo]
                 if not sub.empty:
                     with col:
                         st.metric(f"{algo} Avg Reward",
                                   f"{sub['mean_reward'].mean():.1f}",
                                   delta=f"min={sub['mean_reward'].min():.0f}")
-            baseline_df = df[~df["algorithm"].isin(["DQN", "PPO"])]
+            baseline_df = df[~df["algorithm"].isin(["DQN", "PPO", "A2C"])]
             if not baseline_df.empty:
                 best_bl = baseline_df.groupby("algorithm")["mean_reward"].mean().idxmax()
                 best_bl_val = baseline_df.groupby("algorithm")["mean_reward"].mean().max()
@@ -282,8 +281,8 @@ with tab3:
 
             # Heatmaps
             st.markdown("**Reward Heatmaps**")
-            hm_cols = st.columns(2)
-            for algo, col in zip(["DQN", "PPO"], hm_cols):
+            hm_cols = st.columns(3)
+            for algo, col in zip(["DQN", "PPO", "A2C"], hm_cols):
                 hm_path = f"results/heatmap_{algo.lower()}.png"
                 if os.path.exists(hm_path):
                     with col:
@@ -319,49 +318,46 @@ with tab3:
 # Tab 4: DQN vs PPO Head-to-Head
 # ═══════════════════════════════════════════════════════════════
 with tab4:
-    st.subheader("⚔️ DQN vs PPO Head-to-Head")
+    st.subheader("⚔️ Algorithm Comparison")
 
     csv_path = "results/eval_all_scenarios.csv"
     if os.path.exists(csv_path):
         df = pd.read_csv(csv_path)
-        rl_df = df[df["algorithm"].isin(["DQN", "PPO"])]
+        rl_df = df[df["algorithm"].isin(["DQN", "PPO", "A2C"])]
 
-        if len(rl_df["algorithm"].unique()) == 2:
+        if len(rl_df["algorithm"].unique()) >= 2:
             # Pivot: reward by scenario
             pivot = rl_df.pivot_table(values="mean_reward",
                                        index=["attack_mode", "intensity"],
                                        columns="algorithm", aggfunc="mean").reset_index()
 
             st.markdown("**Winner per scenario**")
+            algos_present = sorted(rl_df["algorithm"].unique())
             results_data = []
-            dqn_wins = ppo_wins = ties = 0
+            win_counts = {a: 0 for a in algos_present}
+            win_counts["Tie"] = 0
             for _, row in pivot.iterrows():
-                dqn_r = row.get("DQN", 0)
-                ppo_r = row.get("PPO", 0)
-                diff = dqn_r - ppo_r
-                if abs(diff) < 5:
-                    winner = "Tie"
-                    ties += 1
-                elif diff > 0:
-                    winner = "DQN"
-                    dqn_wins += 1
+                row_data = {"Attack Mode": row["attack_mode"], "Intensity": row["intensity"]}
+                scores = {}
+                for algo in algos_present:
+                    val = row.get(algo, 0)
+                    row_data[algo] = f"{val:.1f}"
+                    scores[algo] = val
+                best_algo = max(scores, key=scores.get)
+                second_best = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+                if scores[best_algo] - second_best < 5:
+                    row_data["Winner"] = "Tie"
+                    win_counts["Tie"] += 1
                 else:
-                    winner = "PPO"
-                    ppo_wins += 1
-                results_data.append({
-                    "Attack Mode": row["attack_mode"],
-                    "Intensity": row["intensity"],
-                    "DQN": f"{dqn_r:.1f}",
-                    "PPO": f"{ppo_r:.1f}",
-                    "Δ (DQN-PPO)": f"{diff:+.1f}",
-                    "Winner": winner,
-                })
+                    row_data["Winner"] = best_algo
+                    win_counts[best_algo] += 1
+                results_data.append(row_data)
             st.dataframe(pd.DataFrame(results_data), use_container_width=True)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("DQN Wins", dqn_wins)
-            c2.metric("PPO Wins", ppo_wins)
-            c3.metric("Ties (< 5 pts)", ties)
+            win_cols = st.columns(len(algos_present) + 1)
+            for i, algo in enumerate(algos_present):
+                win_cols[i].metric(f"{algo} Wins", win_counts[algo])
+            win_cols[-1].metric("Ties (< 5 pts)", win_counts["Tie"])
 
             # By intensity chart
             st.divider()
@@ -374,7 +370,7 @@ with tab4:
                 with c2:
                     st.image(mode_path, caption="By Attack Mode", use_container_width=True)
         else:
-            st.info("Need both DQN and PPO results. Run evaluate_all.py first.")
+            st.info("Need at least 2 RL algorithm results. Run evaluate_all.py first.")
     else:
         st.info("Run `python scripts/evaluate_all.py` to generate comparison data.")
 
@@ -465,8 +461,10 @@ with tab6:
             fig.patch.set_facecolor("#0f172a")
             ax1.tick_params(colors="#94a3b8")
             ax1_r.tick_params(colors="#94a3b8")
-            for s in ax1.spines.values(): s.set_color("#334155")
-            for s in ax1_r.spines.values(): s.set_color("#334155")
+            for s in ax1.spines.values():
+                s.set_color("#334155")
+            for s in ax1_r.spines.values():
+                s.set_color("#334155")
 
             # Actions bar
             action_map = {"no_op": 0, "block_ip": 1, "rate_limit": 2, "isolate_service": 3}
@@ -479,7 +477,8 @@ with tab6:
             ax2.set_yticks([])
             ax2.set_facecolor("#0f172a")
             ax2.tick_params(colors="#94a3b8")
-            for s in ax2.spines.values(): s.set_color("#334155")
+            for s in ax2.spines.values():
+                s.set_color("#334155")
 
             # Legend
             from matplotlib.patches import Patch

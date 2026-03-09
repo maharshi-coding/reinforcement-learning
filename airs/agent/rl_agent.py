@@ -23,7 +23,7 @@ from stable_baselines3.common.callbacks import (
     StopTrainingOnNoModelImprovement,
 )
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 from airs.environment.network_env import NetworkSecurityEnv
 from airs.environment.multi_scenario_env import MultiScenarioEnv
@@ -139,6 +139,7 @@ class AIRSAgent:
         "vf_coef": 0.5,
         "max_grad_norm": 0.5,
         "policy_kwargs": {"net_arch": {"pi": [256, 256], "vf": [256, 256]}},
+        "device": "cpu",
         "verbose": 0,
     }
 
@@ -153,6 +154,7 @@ class AIRSAgent:
         "max_grad_norm": 0.5,
         "normalize_advantage": True,
         "policy_kwargs": {"net_arch": {"pi": [256, 256], "vf": [256, 256]}},
+        "device": "cpu",
         "verbose": 0,
     }
 

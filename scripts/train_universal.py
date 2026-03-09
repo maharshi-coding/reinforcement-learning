@@ -36,7 +36,6 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 from airs.agent.rl_agent import AIRSAgent
 from airs.config import load_config
-from airs.environment.network_env import NetworkSecurityEnv
 from airs.environment.multi_scenario_env import MultiScenarioEnv
 
 
@@ -124,15 +123,21 @@ def train_curriculum(algorithm, timesteps, cfg, seed):
     # Create initial env
     env = DummyVecEnv([make_curriculum_env(stages[0]["intensities"], env_kwargs, seed)])
 
-    # Build model
+    # Build model — resume from existing if available
     agent = AIRSAgent(
         algorithm=algorithm,
         multi_scenario=True,
         seed=seed,
         env_kwargs=env_kwargs,
+        model_path=model_path,
     )
     model = agent._model
     model.set_env(env)
+
+    if os.path.exists(model_path) or os.path.exists(model_path + ".zip"):
+        print(f"  Resuming from existing model: {model_path}")
+    else:
+        print("  No existing model found — starting fresh.")
 
     for i, stage in enumerate(stages):
         print(f"\n── {stage['name']} ({stage['timesteps']:,} steps) ──")
@@ -207,12 +212,18 @@ def train_standard(algorithm, timesteps, cfg, seed):
         seed=seed,
         env_kwargs=env_kwargs,
         algo_kwargs=algo_kwargs,
+        model_path=model_path,
     )
 
     # Inject our learning curve callback into training
     model = agent._model
     env = DummyVecEnv([make_multi_env(env_kwargs, seed)])
     model.set_env(env)
+
+    if os.path.exists(model_path) or os.path.exists(model_path + ".zip"):
+        print(f"  Resuming from existing model: {model_path}")
+    else:
+        print("  No existing model found — starting fresh.")
 
     eval_env = DummyVecEnv([make_multi_env(env_kwargs, seed + 1000)])
     stop_cb = StopTrainingOnNoModelImprovement(max_no_improvement_evals=20, verbose=1)
@@ -351,11 +362,11 @@ def main():
         all_curves[algo] = lc
 
     # Generate learning curve plots
-    print(f"\nGenerating learning curves...")
+    print("\nGenerating learning curves...")
     plot_learning_curves(all_curves, output_dir)
 
     print(f"\n{'='*60}")
-    print(f" All training complete!")
+    print(" All training complete!")
     print(f"{'='*60}")
 
 
