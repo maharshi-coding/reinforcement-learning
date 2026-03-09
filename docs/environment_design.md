@@ -43,12 +43,18 @@ The 6-dimensional observation vector is fully normalised to [0, 1]:
 | 3  | isolate_service | Take the targeted service offline or into maintenance mode  | Guaranteed threat stop; maximum service disruption   |
 
 ### Cost of Each Action
-| Action | Threat Reduction (base) | Service Disruption (base) |
-|--------|-------------------------|---------------------------|
-| no_op  | 0%                      | 0%                        |
-| block  | 55%                     | 10%                       |
-| limit  | 40%                     | 15%                       |
-| isolate| 80%                     | 40%                       |
+| Action | Threat Reduction (base) | Service Disruption (base) | Success Prob |
+|--------|-------------------------|---------------------------|--------------|
+| no_op  | 0%                      | 0%                        | 100%         |
+| block  | 55%                     | 10%                       | 90%          |
+| limit  | 40%                     | 15%                       | 80%          |
+| isolate| 80%                     | 40%                       | 85%          |
+
+**Stochastic Outcomes (new)**: Actions may fail based on their success probability.
+On failure, threat reduction is reduced to 10% of normal (configurable via
+`failure_residual`), but service cost is still incurred. This models real-world
+unreliability of defensive measures. The `ActionOutcome.success` field and
+`info["action_success"]` expose the result.
 
 ---
 
@@ -93,5 +99,20 @@ All values are additionally `np.clip`-ped to [0,1] before being returned.
 
 - 6 features × 1 float32 each = 24 bytes per observation
 - Minimal memory footprint; compatible with any MlpPolicy architecture
+- With `temporal_window=N`, observation is (6×N,) — stacking last N timesteps
 - Can be extended to 10+ features (e.g., port scan count, geo-IP flag) without
   architectural changes
+
+---
+
+## Additional Realism Knobs
+
+| Feature               | Config Key              | Default | Effect                              |
+|-----------------------|-------------------------|---------|-------------------------------------|
+| Noisy observations    | `noisy_observations`    | false   | Gaussian sensor noise on obs        |
+| Partial observability | `partial_observability`  | false   | Randomly mask features              |
+| Action cooldown       | `action_cooldown`       | 0       | Min steps between non-noop actions  |
+| Delayed effects       | `delayed_effect_steps`  | 0       | Action effect delay                 |
+| Resource budget       | `resource_budget`       | null    | Max non-noop actions per episode    |
+| Temporal window       | `temporal_window`       | 1       | Stack N past observations           |
+| Stochastic actions    | `stochastic_actions`    | true    | Actions may fail (see above)        |

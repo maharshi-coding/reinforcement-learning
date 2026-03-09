@@ -64,3 +64,61 @@ that would otherwise only surface after 30+ minutes of training.
 The `plot_threat_timeline()` visualisation clearly shows when the agent
 oscillates between actions (saw-tooth pattern in action scatter) vs when
 it makes stable, threat-appropriate choices.
+
+---
+
+## Stochastic Environment Lessons
+
+### L11: Stochastic Actions Increase Reward Variance
+With actions that can fail (90%/80%/85% success rates), the reward signal
+becomes noisier. The agent must learn to account for expected value rather
+than deterministic outcomes. This initially slows convergence but produces
+policies that are robust to real-world unreliability.
+
+### L12: Failed Actions Still Incur Cost — Intentional Design
+We chose to always charge service cost even on failure (a firewall rule
+attempt still disrupts traffic briefly, even if the attacker evades it).
+This teaches the agent that actions have guaranteed downsides but uncertain
+upsides, matching real cybersecurity operations.
+
+---
+
+## Self-Play Lessons
+
+### L13: Alternating Freeze is Simpler Than Joint Training
+Joint training (both agents learning simultaneously) is unstable—the loss
+landscape shifts for both agents every step. Alternating freeze (train one
+while the other is fixed) converges more reliably.
+
+### L14: Attacker Entropy Bonus Should Be Higher
+The attacker benefits from higher exploration (`ent_coef=0.02` vs 0.01 for
+defender) because it needs to discover diverse attack strategies to challenge
+the defender effectively.
+
+---
+
+## Explainability Lessons
+
+### L15: Perturbation Importance Is Model-Agnostic
+Unlike gradient-based saliency, perturbation importance works with any SB3
+model (DQN, PPO, A2C, RecurrentPPO) without accessing internal gradients.
+This makes it the default XAI method.
+
+### L16: Always Move Obs Tensor to Model Device
+When extracting Q-values or logits directly from the model's network, the
+observation tensor must be on the same device as the model weights. Missing
+this caused CUDA/CPU mismatch errors in the initial implementation.
+
+---
+
+## Architecture Lessons (Consolidation)
+
+### L17: Consolidate Early — Don't Maintain Two Module Trees
+The project initially had both `src/` and `airs/` with overlapping code.
+This caused import confusion and duplicated maintenance. Consolidating into
+a single `airs/` module tree immediately improved clarity and reduced bugs.
+
+### L18: Conditional Imports for Optional Dependencies
+RecurrentPPO depends on `sb3-contrib`, which may not be installed.
+Using `try/except ImportError` with a `_HAS_RECURRENT` flag keeps the
+main agent module functional even without the optional dependency.

@@ -1,19 +1,19 @@
 # AIRS – Training Strategy
 
-## Algorithm Selection: DQN vs PPO
+## Algorithm Selection: DQN vs PPO vs A2C vs RecurrentPPO
 
-| Criterion             | DQN                              | PPO                              |
-|-----------------------|----------------------------------|----------------------------------|
-| Action space          | Discrete ✓                      | Continuous or Discrete ✓        |
-| Sample efficiency     | Higher (off-policy replay)       | Lower (on-policy)                |
-| Stability             | Stable with target network       | Stable with clipping             |
-| Cybersecurity fit     | Value-based: Q(s,a) per action ✓ | Policy-gradient: good for stoch  |
-| Recommended           | **Primary (DQN)**                | Secondary (comparison)           |
+| Criterion             | DQN                              | PPO                              | A2C                  | RecurrentPPO                    |
+|-----------------------|----------------------------------|----------------------------------|----------------------|---------------------------------|
+| Action space          | Discrete ✓                      | Continuous or Discrete ✓        | Discrete ✓          | Discrete ✓                     |
+| Sample efficiency     | Higher (off-policy replay)       | Lower (on-policy)                | Lower (on-policy)    | Lower (on-policy + LSTM)        |
+| Stability             | Stable with target network       | Stable with clipping             | Moderate             | Stable with clipping + memory   |
+| Temporal reasoning    | Single observation               | Single observation               | Single observation   | **LSTM hidden state** ✓        |
+| Cybersecurity fit     | Value-based: Q(s,a) per action ✓ | Policy-gradient: good for stoch  | Fast convergence     | Memory across attack phases    |
+| Recommended           | **Primary (DQN)**                | Secondary (comparison)           | Quick experiments    | Multi-stage attack reasoning   |
 
 **Primary choice: DQN** – the discrete action space and value-based objective
-(learn which action is most worth taking in each security state) make DQN
-the natural fit. Experience replay enables the agent to learn from rare
-high-threat events more effectively than on-policy PPO.
+make DQN the natural fit. **RecurrentPPO** is recommended for multi-stage
+attacks where temporal memory helps track attack phase transitions.
 
 ---
 
@@ -34,17 +34,54 @@ high-threat events more effectively than on-policy PPO.
 
 ---
 
-## PPO Hyperparameters (for comparison)
+## PPO Hyperparameters (Tuned)
 
 | Parameter      | Value  |
 |----------------|--------|
-| learning_rate  | 3e-4   |
-| n_steps        | 512    |
-| batch_size     | 64     |
-| n_epochs       | 10     |
+| learning_rate  | 2.5e-4 |
+| n_steps        | 1024   |
+| batch_size     | 128    |
+| n_epochs       | 15     |
 | gamma          | 0.99   |
 | gae_lambda     | 0.95   |
 | clip_range     | 0.2    |
+| ent_coef       | 0.01   |
+| vf_coef        | 0.5    |
+| net_arch       | pi: [256,256], vf: [256,256] |
+
+---
+
+## A2C Hyperparameters
+
+| Parameter            | Value  |
+|----------------------|--------|
+| learning_rate        | 7e-4   |
+| n_steps              | 256    |
+| gamma                | 0.99   |
+| gae_lambda           | 0.95   |
+| ent_coef             | 0.01   |
+| normalize_advantage  | true   |
+| net_arch             | pi: [256,256], vf: [256,256] |
+
+---
+
+## RecurrentPPO Hyperparameters (LSTM Policy)
+
+Requires `sb3-contrib>=2.0.0`.
+Uses `MlpLstmPolicy` — maintains hidden state across steps within an episode.
+
+| Parameter          | Value  |
+|--------------------|--------|
+| learning_rate      | 2.5e-4 |
+| n_steps            | 1024   |
+| batch_size         | 128    |
+| n_epochs           | 10     |
+| gamma              | 0.99   |
+| gae_lambda         | 0.95   |
+| clip_range         | 0.2    |
+| lstm_hidden_size   | 128    |
+| n_lstm_layers      | 1      |
+| net_arch           | pi: [256], vf: [256] |
 
 ---
 
@@ -81,12 +118,34 @@ This ensures the agent sees a wide variety of states before committing to a poli
 
 ---
 
-## Curriculum Learning (Recommended Extension)
+## Curriculum Learning (Implemented)
 
 1. Start with `brute_force, low`
 2. Advance to `brute_force, medium` → `brute_force, high`
 3. Then `flood, low` → `flood, high`
 4. Finally `adaptive, medium` → `adaptive, high`
+
+Configurable in `configs/default.yaml` under `training.curriculum`.
+Method: `AIRSAgent.train_curriculum(stages)`.
+
+---
+
+## Self-Play Training (New)
+
+Alternates between training a PPO defender and a PPO attacker:
+
+1. **Round N**: Freeze attacker → train defender for `defender_steps`
+2. **Round N**: Freeze defender → train attacker for `attacker_steps`
+3. Repeat for `rounds` iterations
+
+The attacker has 6 strategies (stealth, brute force, flood, full assault,
+balanced, evasion) and learns to exploit defender weaknesses. The defender
+becomes progressively more robust.
+
+```bash
+# Self-play training
+python scripts/train_self_play.py --rounds 10 --defender_steps 20000 --attacker_steps 20000
+```
 
 ---
 
@@ -99,8 +158,14 @@ python scripts/train.py --algorithm dqn --attack_mode adaptive --timesteps 10000
 # Train PPO for comparison
 python scripts/train.py --algorithm ppo --attack_mode adaptive --timesteps 100000
 
-# Evaluate
-python scripts/evaluate.py --algorithm dqn --attack_mode adaptive --episodes 50
+# Train with curriculum learning
+python scripts/train.py --algorithm ppo --curriculum --config configs/default.yaml
+
+# Self-play adversarial training
+python scripts/train_self_play.py --rounds 10 --defender_steps 20000 --attacker_steps 20000
+
+# Train RecurrentPPO (requires sb3-contrib)
+python scripts/train.py --algorithm recurrent_ppo --attack_mode multi_stage --timesteps 100000
 ```
 
 ---

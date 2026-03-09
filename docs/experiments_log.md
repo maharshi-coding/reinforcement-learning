@@ -59,3 +59,61 @@ and final policy quality.
 
 Compare final policy performance when trained only on static attacker vs
 adaptive attacker. Hypothesis: adaptive-trained policy generalises better.
+
+---
+
+## Experiment 005 – Stochastic Action Outcomes
+
+| Field            | Value                      |
+|------------------|----------------------------|
+| Date             | 2026-03-09                 |
+| Change           | Stochastic ResponseEngine  |
+| Success probs    | block=0.90, limit=0.80, isolate=0.85 |
+| Failure residual | 10% of normal reduction    |
+
+**Rationale**: Real defensive actions don't always succeed. IP blocks can be
+evaded, rate limiting can be circumvented, service isolation may partially fail.
+Stochastic outcomes force the agent to learn robust policies rather than
+memorising a deterministic environment.
+
+**Impact**: Reward variance increases, which may slow early training convergence
+but should produce a more robust final policy.
+
+---
+
+## Experiment 006 – Adversarial Self-Play
+
+| Field            | Value                      |
+|------------------|----------------------------|
+| Date             | 2026-03-09                 |
+| Method           | SelfPlayTrainer (PPO vs PPO) |
+| Attacker actions | 6 strategies (stealth, BF, flood, all-in, balanced, evasion) |
+| Rounds           | 10 (configurable)          |
+| Steps per round  | 20K defender + 20K attacker |
+
+**Rationale**: Scripted attackers have fixed behaviour. A learned attacker
+continuously discovers new exploits, forcing the defender to generalise.
+
+**Expected**: Defender policy from self-play should outperform scripted-attacker
+trained policy on unseen attack patterns.
+
+---
+
+## Experiment 007 – Planned: RecurrentPPO on Multi-Stage Attacks
+
+| Field            | Value                      |
+|------------------|----------------------------|
+| Algorithm        | RecurrentPPO (MlpLstmPolicy) |
+| Attack mode      | multi_stage                |
+| Hypothesis       | LSTM memory allows the agent to track attack phase transitions |
+| Comparison       | MlpPolicy PPO vs MlpLstmPolicy RecurrentPPO |
+
+---
+
+## Experiment 008 – Planned: Explainability Analysis
+
+| Field            | Value                      |
+|------------------|----------------------------|
+| Method           | Perturbation importance + SHAP |
+| Goal             | Understand which features drive defensive decisions |
+| Expected         | threat_level and traffic_rate should dominate |
